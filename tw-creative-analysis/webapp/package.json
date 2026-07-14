@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "seed": "node -e \"const db = require('./database'); const path = require('path'); const fs = require('fs'); const sqlite3 = require('sqlite3').verbose(); const DB_PATH = path.join(__dirname, 'dashboard.db'); const dbInstance = new sqlite3.Database(DB_PATH); function run(sql, params = []) { return new Promise((resolve, reject) => { dbInstance.run(sql, params, function (err) { if (err) reject(err); else resolve({ lastID: this.lastID, changes: this.changes }); }); }); } async function seedData() { const concepts = JSON.parse(fs.readFileSync(path.join(__dirname, 'database_seed_source', 'seed_concepts.json'), 'utf8')); const issues = JSON.parse(fs.readFileSync(path.join(__dirname, 'database_seed_source', 'seed_issues.json'), 'utf8')); const now = new Date().toISOString(); await run('DROP TABLE IF EXISTS dashboard_items'); await run(`CREATE TABLE dashboard_items ( id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, region TEXT, data TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT )`); for (const c of concepts) { const { region, ...rest } = c; await run(`INSERT INTO dashboard_items (type, region, data, created_at, updated_at, updated_by) VALUES (?,?,?,?,?,?)`, ['concept', region, JSON.stringify(rest), now, now, '시드 데이터']); } for (const i of issues) { const { region, ...rest } = i; await run(`INSERT INTO dashboard_items (type, region, data, created_at, updated_at, updated_by) VALUES (?,?,?,?,?,?)`, ['issue', region, JSON.stringify(rest), now, now, '시드 데이터']); } console.log(`✅ Seeded ${concepts.length} concepts + ${issues.length} issues`); dbInstance.close(); } seedData().catch(err => { console.error('❌ Seed failed:', err); process.exit(1); });\" "
   },
   "dependencies": {
     "express": "^4.19.2",
@@ -14,3 +15,4 @@
     "cors": "^2.8.5"
   }
 }
+
