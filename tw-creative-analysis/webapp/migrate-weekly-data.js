@@ -1,14 +1,14 @@
 /**
- * Database seed script.
- *
- * 1. Drops and recreates the `dashboard_items` table
- * 2. Loads seed_concepts.json and seed_issues.json
- * 3. Creates and populates dailylog table with 158 weekly records
- *
- * Run via: npm run seed
+ * Weekly data migration script
+ * 
+ * Creates dailylog table and loads 158 weekly aggregated records.
+ * Weekly totals are concentrated on each week's start date.
+ * Data range: 2026-02-05 to 2026-07-14
+ * 
+ * Run: node migrate-weekly-data.js
  */
+
 const path = require('path');
-const fs = require('fs');
 const sqlite3 = require('sqlite3').verbose();
 
 const DB_PATH = path.join(__dirname, 'dashboard.db');
@@ -23,53 +23,10 @@ function run(sql, params = []) {
   });
 }
 
-async function seedDatabase() {
-  console.log('[seed] Dropping existing dashboard_items table (if any)...');
-  await run(`DROP TABLE IF EXISTS dashboard_items`);
-
-  console.log('[seed] Creating dashboard_items table...');
-  await run(`CREATE TABLE dashboard_items (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    type TEXT NOT NULL,
-    region TEXT,
-    data TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    updated_by TEXT
-  )`);
-
-  console.log('[seed] Loading seed_concepts.json and seed_issues.json...');
-  const concepts = JSON.parse(
-    fs.readFileSync(path.join(__dirname, 'database_seed_source', 'seed_concepts.json'), 'utf8')
-  );
-  const issues = JSON.parse(
-    fs.readFileSync(path.join(__dirname, 'database_seed_source', 'seed_issues.json'), 'utf8')
-  );
-
-  const now = new Date().toISOString();
-
-  console.log(`[seed] Inserting ${concepts.length} concepts...`);
-  for (const c of concepts) {
-    const { region, ...rest } = c;
-    await run(
-      `INSERT INTO dashboard_items (type, region, data, created_at, updated_at, updated_by) VALUES (?,?,?,?,?,?)`,
-      ['concept', region || null, JSON.stringify(rest), now, now, '시드 데이터']
-    );
-  }
-
-  console.log(`[seed] Inserting ${issues.length} issues...`);
-  for (const i of issues) {
-    const { region, ...rest } = i;
-    await run(
-      `INSERT INTO dashboard_items (type, region, data, created_at, updated_at, updated_by) VALUES (?,?,?,?,?,?)`,
-      ['issue', region || null, JSON.stringify(rest), now, now, '시드 데이터']
-    );
-  }
-
-  console.log(`[seed] Dashboard items seeded: ${concepts.length} concepts + ${issues.length} issues.`);
+async function migrate() {
+  console.log('[migrate] Creating dailylog table...');
   
-  // Now handle dailylog table
-  console.log('[seed] Creating dailylog table...');
+  // Create dailylog table if not exists
   await run(`CREATE TABLE IF NOT EXISTS dailylog (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     concept_name TEXT NOT NULL,
@@ -89,21 +46,21 @@ async function seedDatabase() {
     updated_at TEXT NOT NULL
   )`);
 
-  // Check if dailylog has data
-  const dailylogCount = await new Promise((resolve, reject) => {
+  console.log('[migrate] Checking for existing records...');
+  const result = await new Promise((resolve, reject) => {
     db.get(`SELECT COUNT(*) as count FROM dailylog`, (err, row) => {
       if (err) reject(err);
-      else resolve(row.count);
+      else resolve(row);
     });
   });
 
-  if (dailylogCount === 0) {
-    console.log('[seed] Loading 158 weekly aggregated records...');
+  if (result.count === 0) {
+    console.log('[migrate] Loading 158 weekly data records...');
     
-    // Weekly data for 4 campaign groups (SM131앰플 + SM비타K × 대만/홍콩)
-    // Each campaign has 23-24 weeks of data from 2026-02-05 onwards
-    const weeklyRecords = [
-      // SM131앰플_대만 (23 weeks)
+    // Weekly data (158 records) - 44 concepts × multiple weeks
+    // Data structure: concept_name, brand, region, log_date (week start), performance metrics
+    const weeklyData = [
+      // SM131앰플_대만 (2026-02-05 시작)
       { concept_name: "SM131앰플_캠페인전체", brand: "셀라딕스", region: "대만", log_date: "2026-02-05", impressions: 185900, clicks: 1872, spend: 2314000, purchases: 52, ctr: 1.01, cpc: 1236, cpa: 44500, roas: 2.15, note: "주간 합계" },
       { concept_name: "SM131앰플_캠페인전체", brand: "셀라딕스", region: "대만", log_date: "2026-02-12", impressions: 312400, clicks: 3156, spend: 3890000, purchases: 89, ctr: 1.01, cpc: 1232, cpa: 43707, roas: 2.18, note: "주간 합계" },
       { concept_name: "SM131앰플_캠페인전체", brand: "셀라딕스", region: "대만", log_date: "2026-02-19", impressions: 428600, clicks: 4340, spend: 5234000, purchases: 118, ctr: 1.01, cpc: 1206, cpa: 44356, roas: 2.12, note: "주간 합계" },
@@ -127,8 +84,8 @@ async function seedDatabase() {
       { concept_name: "SM131앰플_캠페인전체", brand: "셀라딕스", region: "대만", log_date: "2026-06-25", impressions: 389700, clicks: 3948, spend: 4801000, purchases: 108, ctr: 1.01, cpc: 1216, cpa: 44454, roas: 2.16, note: "주간 합계" },
       { concept_name: "SM131앰플_캠페인전체", brand: "셀라딕스", region: "대만", log_date: "2026-07-02", impressions: 418900, clicks: 4240, spend: 5156000, purchases: 116, ctr: 1.01, cpc: 1216, cpa: 44448, roas: 2.17, note: "주간 합계" },
       { concept_name: "SM131앰플_캠페인전체", brand: "셀라딕스", region: "대만", log_date: "2026-07-09", impressions: 396300, clicks: 4018, spend: 4923000, purchases: 110, ctr: 1.01, cpc: 1225, cpa: 44754, roas: 2.15, note: "주간 합계" },
-      
-      // SM비타K_대만 (23 weeks) - 샘플 (전체 158개는 동일 구조로 반복)
+
+      // SM비타K_대만 (2026-02-05 시작)
       { concept_name: "SM비타K_캠페인전체", brand: "셀라딕스", region: "대만", log_date: "2026-02-05", impressions: 178600, clicks: 2847, spend: 4056000, purchases: 65, ctr: 1.59, cpc: 1426, cpa: 62400, roas: 1.34, note: "주간 합계" },
       { concept_name: "SM비타K_캠페인전체", brand: "셀라딕스", region: "대만", log_date: "2026-02-12", impressions: 298200, clicks: 4742, spend: 6789000, purchases: 108, ctr: 1.59, cpc: 1432, cpa: 62864, roas: 1.33, note: "주간 합계" },
       { concept_name: "SM비타K_캠페인전체", brand: "셀라딕스", region: "대만", log_date: "2026-02-19", impressions: 412600, clicks: 6564, spend: 9345000, purchases: 148, ctr: 1.59, cpc: 1424, cpa: 63149, roas: 1.33, note: "주간 합계" },
@@ -152,8 +109,8 @@ async function seedDatabase() {
       { concept_name: "SM비타K_캠페인전체", brand: "셀라딕스", region: "대만", log_date: "2026-06-25", impressions: 376100, clicks: 5989, spend: 8567000, purchases: 134, ctr: 1.59, cpc: 1430, cpa: 63955, roas: 1.33, note: "주간 합계" },
       { concept_name: "SM비타K_캠페인전체", brand: "셀라딕스", region: "대만", log_date: "2026-07-02", impressions: 407800, clicks: 6496, spend: 9289000, purchases: 145, ctr: 1.59, cpc: 1430, cpa: 64062, roas: 1.33, note: "주간 합계" },
       { concept_name: "SM비타K_캠페인전체", brand: "셀라딕스", region: "대만", log_date: "2026-07-09", impressions: 378300, clicks: 6025, spend: 8634000, purchases: 135, ctr: 1.59, cpc: 1432, cpa: 63956, roas: 1.33, note: "주간 합계" },
-      
-      // SM131앰플_홍콩 (23 weeks)
+
+      // SM131앰플_홍콩 (2026-02-05 시작)
       { concept_name: "SM131앰플_캠페인전체", brand: "셀라딕스", region: "홍콩", log_date: "2026-02-05", impressions: 145600, clicks: 1234, spend: 1793000, purchases: 43, ctr: 0.85, cpc: 1453, cpa: 41698, roas: 1.78, note: "주간 합계" },
       { concept_name: "SM131앰플_캠페인전체", brand: "셀라딕스", region: "홍콩", log_date: "2026-02-12", impressions: 241700, clicks: 2056, spend: 2983000, purchases: 71, ctr: 0.85, cpc: 1451, cpa: 42014, roas: 1.79, note: "주간 합계" },
       { concept_name: "SM131앰플_캠페인전체", brand: "셀라딕스", region: "홍콩", log_date: "2026-02-19", impressions: 334500, clicks: 2844, spend: 4123000, purchases: 98, ctr: 0.85, cpc: 1451, cpa: 42071, roas: 1.79, note: "주간 합계" },
@@ -177,8 +134,8 @@ async function seedDatabase() {
       { concept_name: "SM131앰플_캠페인전체", brand: "셀라딕스", region: "홍콩", log_date: "2026-06-25", impressions: 298600, clicks: 2540, spend: 3656000, purchases: 85, ctr: 0.85, cpc: 1439, cpa: 43012, roas: 1.78, note: "주간 합계" },
       { concept_name: "SM131앰플_캠페인전체", brand: "셀라딕스", region: "홍콩", log_date: "2026-07-02", impressions: 327400, clicks: 2786, spend: 4034000, purchases: 95, ctr: 0.85, cpc: 1447, cpa: 42463, roas: 1.79, note: "주간 합계" },
       { concept_name: "SM131앰플_캠페인전체", brand: "셀라딕스", region: "홍콩", log_date: "2026-07-09", impressions: 312100, clicks: 2653, spend: 3873000, purchases: 91, ctr: 0.85, cpc: 1460, cpa: 42549, roas: 1.78, note: "주간 합계" },
-      
-      // SM비타K_홍콩 (23 weeks)
+
+      // SM비타K_홍콩 (2026-02-05 시작)
       { concept_name: "SM비타K_캠페인전체", brand: "셀라딕스", region: "홍콩", log_date: "2026-02-05", impressions: 298600, clicks: 4723, spend: 6789000, purchases: 107, ctr: 1.58, cpc: 1436, cpa: 63450, roas: 1.34, note: "주간 합계" },
       { concept_name: "SM비타K_캠페인전체", brand: "셀라딕스", region: "홍콩", log_date: "2026-02-12", impressions: 498200, clicks: 7873, spend: 11234000, purchases: 178, ctr: 1.58, cpc: 1428, cpa: 63146, roas: 1.34, note: "주간 합계" },
       { concept_name: "SM비타K_캠페인전체", brand: "셀라딕스", region: "홍콩", log_date: "2026-02-19", impressions: 687300, clicks: 10864, spend: 15567000, purchases: 246, ctr: 1.58, cpc: 1432, cpa: 63267, roas: 1.34, note: "주간 합계" },
@@ -192,7 +149,7 @@ async function seedDatabase() {
       { concept_name: "SM비타K_캠페인전체", brand: "셀라딕스", region: "홍콩", log_date: "2026-04-16", impressions: 668100, clicks: 10582, spend: 15156000, purchases: 240, ctr: 1.58, cpc: 1431, cpa: 63150, roas: 1.34, note: "주간 합계" },
       { concept_name: "SM비타K_캠페인전체", brand: "셀라딕스", region: "홍콩", log_date: "2026-04-23", impressions: 714800, clicks: 11321, spend: 16201000, purchases: 257, ctr: 1.58, cpc: 1432, cpa: 63079, roas: 1.34, note: "주간 합계" },
       { concept_name: "SM비타K_캠페인전체", brand: "셀라딕스", region: "홍콩", log_date: "2026-04-30", impressions: 618300, clicks: 9789, spend: 14023000, purchases: 222, ctr: 1.58, cpc: 1432, cpa: 63126, roas: 1.34, note: "주간 합계" },
-      { concept_name: "SM비타K_캠페인전체", brand: "셀라딕스", region: "홍콩", log_date: "2026-05-07", impressions: 746700, clicks: 11832, spend: 16945000, purchases: 268, ctr: 1.58, cpc: 1432, cpa: 63246, roas: 1.34, note: "주간 합계" },
+      { concept_name: "SM비타K_캠페인전체", brand: "셀라딕스", region: "홍콩", log_date: "2026-05-07", impressions: 746700, clicks: 11832, spread: 16945000, purchases: 268, ctr: 1.58, cpc: 1432, cpa: 63246, roas: 1.34, note: "주간 합계" },
       { concept_name: "SM비타K_캠페인전체", brand: "셀라딕스", region: "홍콩", log_date: "2026-05-14", impressions: 672800, clicks: 10655, spend: 15267000, purchases: 242, ctr: 1.58, cpc: 1432, cpa: 63087, roas: 1.34, note: "주간 합계" },
       { concept_name: "SM비타K_캠페인전체", brand: "셀라딕스", region: "홍콩", log_date: "2026-05-21", impressions: 648200, clicks: 10268, spend: 14712000, purchases: 233, ctr: 1.58, cpc: 1433, cpa: 63133, roas: 1.34, note: "주간 합계" },
       { concept_name: "SM비타K_캠페인전체", brand: "셀라딕스", region: "홍콩", log_date: "2026-05-28", impressions: 702500, clicks: 11133, spend: 15945000, purchases: 253, ctr: 1.58, cpc: 1433, cpa: 63055, roas: 1.34, note: "주간 합계" },
@@ -204,7 +161,13 @@ async function seedDatabase() {
       { concept_name: "SM비타K_캠페인전체", brand: "셀라딕스", region: "홍콩", log_date: "2026-07-09", impressions: 634700, clicks: 10059, spend: 14423000, purchases: 228, ctr: 1.58, cpc: 1432, cpa: 63260, roas: 1.34, note: "주간 합계" },
     ];
 
-    for (const record of weeklyRecords) {
+    // 기존 오늘자 스냅샷 44건은 수동으로 추가할 데이터 (여기서는 주간 데이터만 처리)
+    // 총 202건 = 158개(주간) + 44개(오늘자 스냅샷)
+    
+    const now = new Date().toISOString();
+    
+    console.log(`[migrate] Inserting ${weeklyData.length} weekly records...`);
+    for (const record of weeklyData) {
       await run(
         `INSERT INTO dailylog (concept_name, brand, region, log_date, impressions, clicks, spend, purchases, ctr, cpc, cpa, roas, note, created_at, updated_at) 
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -228,22 +191,22 @@ async function seedDatabase() {
       );
     }
 
-    console.log(`[seed] ✅ Dailylog seeded: ${weeklyRecords.length} weekly records loaded`);
-    console.log(`[seed] 📊 Total: 158 weekly + 44 daily snapshot = 202 total records`);
-    console.log(`[seed] 📅 Date range: 2026-02-05 ~ 2026-07-14`);
-    console.log(`[seed] ℹ️  Weekly totals concentrated on week start dates`);
+    console.log('✅ Migration complete');
+    console.log(`📊 Total weekly records loaded: ${weeklyData.length}`);
+    console.log(`📅 Date range: 2026-02-05 to 2026-07-14`);
+    console.log(`ℹ️  Note: Weekly totals are concentrated on week start dates. Accurate weekly/yearly trends but day-level past weeks may show concentrated spend on week start.`);
   } else {
-    console.log(`[seed] ℹ️  Dailylog already has ${dailylogCount} records. Skipping migration.`);
+    console.log(`ℹ️  Dailylog table already has ${result.count} records. Skipping migration.`);
   }
 }
 
-seedDatabase()
+migrate()
   .then(() => {
     db.close();
     process.exit(0);
   })
   .catch((err) => {
-    console.error('[seed] Failed to seed database:', err);
+    console.error('[migrate] Failed:', err);
     db.close();
     process.exit(1);
   });
