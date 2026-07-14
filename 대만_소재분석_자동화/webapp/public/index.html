@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>대만파트 자체컨텐츠 분석</title>
+<link rel="stylesheet" href="/style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="topbar-inner">
+    <div class="brand" id="brand-home"><span class="dot"></span>대만/홍콩 자체컨텐츠 분석</div>
+    <div class="topnav" id="region-nav">
+      <button data-region="대만" class="active">🇹🇼 대만</button>
+      <button data-region="홍콩">🇭🇰 홍콩</button>
+    </div>
+    <div class="topnav" id="nav">
+      <button data-tab="search">검색</button>
+      <button data-tab="meta">메타현황판</button>
+      <button data-tab="trend">성과추이</button>
+      <button data-tab="daily">일별/주별/월별 추이</button>
+      <button data-tab="lowperf">저효율 인트로+개선방안</button>
+    </div>
+    <div class="topbar-updated"><div class="sync-dot" id="sync-dot"></div><span id="sync-label">연결 중...</span></div>
+  </div>
+</div>
+<div class="shell" id="shell"></div>
+
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal" id="modal-body"></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>
