@@ -547,25 +547,73 @@ function renderLowPerf(){
 
 /* ===================== 일별/주별/월별/연별 추이 ===================== */
 let dailyPeriod = 'day';
+let dailyBrand = '전체';
+let dailyConceptFilter = '전체';
+let dailyAnchor = null;
 let dailyChartInstance = null;
 
-function todayStr(){ const d=new Date(); return d.toISOString().slice(0,10); }
-function isoWeek(dateStr){
-  const d = new Date(dateStr+'T00:00:00');
-  const target = new Date(d.valueOf());
-  const dayNr = (d.getDay()+6)%7;
-  target.setDate(target.getDate()-dayNr+3);
-  const firstThursday = new Date(target.getFullYear(),0,4);
-  const diff = (target - firstThursday)/86400000;
-  const week = 1+Math.floor(diff/7);
-  return target.getFullYear()+'-W'+String(week).padStart(2,'0');
+function todayStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function parseDate(s){ return new Date(s+'T00:00:00'); }
+function ymd(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function mdLabel(d){ return String(d.getMonth()+1)+'/'+String(d.getDate()); }
+function addDays(d,n){ const nd=new Date(d); nd.setDate(nd.getDate()+n); return nd; }
+function addMonths(d,n){ const nd=new Date(d); nd.setMonth(nd.getMonth()+n); return nd; }
+function addYears(d,n){ const nd=new Date(d); nd.setFullYear(nd.getFullYear()+n); return nd; }
+function mondayOf(d){
+  const nd = new Date(d); nd.setHours(0,0,0,0);
+  const wd = (nd.getDay()+6)%7;
+  nd.setDate(nd.getDate()-wd);
+  return nd;
 }
-function bucketOf(dateStr, period){
-  if(period==='day') return dateStr;
-  if(period==='week') return isoWeek(dateStr);
-  if(period==='month') return dateStr.slice(0,7);
-  return dateStr.slice(0,4);
+const WEEKDAY_KO = ['월','화','수','목','금','토','일'];
+
+function getBuckets(period, anchor){
+  if(period==='day'){
+    const monday = mondayOf(anchor);
+    const days = Array.from({length:7}, (_,i)=>addDays(monday,i));
+    const rangeLabel = `${days[0].getFullYear()}년 ${mdLabel(days[0])} ~ ${mdLabel(days[6])} (월요일 기준 7일)`;
+    const buckets = days.map((d,i)=>({ key: ymd(d), label: `${WEEKDAY_KO[i]} (${mdLabel(d)})`, match: e=>e.date===ymd(d) }));
+    return { buckets, rangeLabel, prev:()=>addDays(monday,-7), next:()=>addDays(monday,7) };
+  }
+  if(period==='week'){
+    const y = anchor.getFullYear(), m = anchor.getMonth();
+    const monthStart = new Date(y, m, 1);
+    const monthEnd = new Date(y, m+1, 0);
+    const rangeLabel = `${y}년 ${m+1}월 (4주 구간)`;
+    const weekRanges = [[1,7],[8,14],[15,21],[22,monthEnd.getDate()]];
+    const buckets = weekRanges.map(([s,e],i)=>{
+      const sd = new Date(y,m,s);
+      const ed = new Date(y,m,Math.min(e,monthEnd.getDate()));
+      return { key:`${y}-${String(m+1).padStart(2,'0')}-W${i+1}`, label:`${i+1}주 (${mdLabel(sd)}~${mdLabel(ed)})`, match: ev=>{ const dd=parseDate(ev.date); return dd>=sd && dd<=ed; } };
+    });
+    return { buckets, rangeLabel, prev:()=>addMonths(monthStart,-1), next:()=>addMonths(monthStart,1) };
+  }
+  const y = anchor.getFullYear();
+  const yearStart = new Date(y,0,1);
+  const rangeLabel = `${y}년 (1~12월)`;
+  const buckets = Array.from({length:12},(_,i)=>({
+    key:`${y}-${String(i+1).padStart(2,'0')}`, label:`${i+1}월`,
+    match: ev => ev.date.slice(0,7) === `${y}-${String(i+1).padStart(2,'0')}`
+  }));
+  return { buckets, rangeLabel, prev:()=>addYears(yearStart,-1), next:()=>addYears(yearStart,1) };
 }
+
+function aggregateBucket(entries){
+  let spend=0, purchases=0, clicks=0, roasSum=0, roasCount=0;
+  entries.forEach(e=>{
+    spend += e.spend||0;
+    purchases += e.purchases||0;
+    clicks += e.clicks||0;
+    if(e.roas!=null){ roasSum += e.roas; roasCount++; }
+  });
+  return {
+    spend, purchases,
+    avgRoas: roasCount ? roasSum/roasCount : null,
+    cpc: clicks ? spend/clicks : null,
+    cpa: purchases ? spend/purchases : null
+  };
+}
+
 async function recordDailySnapshot(){
   const region = currentRegion;
   const rows = REG().performance;
@@ -583,71 +631,104 @@ async function recordDailySnapshot(){
 }
 
 function renderDaily(){
-  const log = DATA.dailyLog[currentRegion] || [];
-  let html = `<div class="page-head"><h2>일별/주별/월별/연별 추이</h2><div class="sub">2주 단위 조회 사이 공백 없이, 매일 쌓이는 누적 데이터로 추이를 봅니다</div></div>`;
+  const fullLog = DATA.dailyLog[currentRegion] || [];
+
+  if(!dailyAnchor){
+    const latest = fullLog.reduce((m,e)=> (!m || e.date>m) ? e.date : m, null);
+    dailyAnchor = parseDate(latest || todayStr());
+  }
+
+  const conceptNames = Array.from(new Set(fullLog.map(e=>e.concept))).sort();
+
+  let html = `<div class="page-head"><h2>일별/주별/연별 추이</h2><div class="sub">일단위(월요일 기준 7일) · 주단위(한 달을 4주로 분할) · 연단위(1~12월) 로 조회합니다</div></div>`;
   html += `<div class="callout">데이터는 자동으로 매일 쌓이지 않고, 아래 <b>"오늘 스냅샷 기록"</b> 버튼을 하루 한 번 눌러야 그날 데이터가 누적됩니다.</div>`;
   html += `<div class="filter-bar">
     <select id="daily-period">
-      ${[['day','일단위'],['week','주단위'],['month','월단위'],['year','연단위']].map(([v,l])=>`<option value="${v}" ${dailyPeriod===v?'selected':''}>${l}</option>`).join('')}
+      ${[['day','일단위'],['week','주단위'],['year','연단위']].map(([v,l])=>`<option value="${v}" ${dailyPeriod===v?'selected':''}>${l}</option>`).join('')}
     </select>
-    <select id="daily-brand"><option value="전체">전체 브랜드</option>${BRANDS().map(b=>`<option>${esc(b)}</option>`).join('')}</select>
+    <select id="daily-brand">
+      <option value="전체" ${dailyBrand==='전체'?'selected':''}>전체 브랜드</option>
+      ${BRANDS().map(b=>`<option ${dailyBrand===b?'selected':''}>${esc(b)}</option>`).join('')}
+    </select>
+    <select id="daily-concept">
+      <option value="전체" ${dailyConceptFilter==='전체'?'selected':''}>전체 소재</option>
+      ${conceptNames.map(c=>`<option ${dailyConceptFilter===c?'selected':''}>${esc(c)}</option>`).join('')}
+    </select>
     <button id="daily-snapshot-btn" style="background:var(--primary);color:#fff;border:none;border-radius:10px;padding:8px 16px;font-size:12.5px;font-weight:700;cursor:pointer;">+ 오늘 스냅샷 기록</button>
   </div>`;
 
-  if(!log.length){
+  if(!fullLog.length){
     html += `<div class="callout warn"><b>누적된 일별 데이터가 없습니다.</b> "오늘 스냅샷 기록" 버튼을 눌러 첫 데이터를 쌓아보세요.</div>`;
     document.getElementById('shell').innerHTML = html;
     document.getElementById('daily-snapshot-btn').addEventListener('click', recordDailySnapshot);
     return;
   }
 
-  html += `<div class="card"><canvas id="daily-chart" height="90"></canvas></div>`;
-  html += `<div class="section-title">구간별 지표 <span class="hint">지출 · 구매 · 평균 ROAS</span></div>
+  html += `<div class="card">
+    <div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:10px;">
+      <button id="daily-prev" style="background:var(--surface-alt);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:5px 12px;font-size:13px;font-weight:700;cursor:pointer;">◀</button>
+      <span id="daily-range-label" style="font-size:13.5px;font-weight:700;color:var(--text);min-width:220px;text-align:center;"></span>
+      <button id="daily-next" style="background:var(--surface-alt);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:5px 12px;font-size:13px;font-weight:700;cursor:pointer;">▶</button>
+    </div>
+    <canvas id="daily-chart" height="90"></canvas>
+  </div>`;
+  html += `<div class="section-title">구간별 지표 <span class="hint">지출 금액 · 구매수 · 평균 ROAS · CPC · CPA</span></div>
   <div class="card" style="overflow-x:auto;"><table id="daily-table"></table></div>`;
   document.getElementById('shell').innerHTML = html;
 
   function draw(){
-    const period = document.getElementById('daily-period').value;
-    const brandFilter = document.getElementById('daily-brand').value;
-    dailyPeriod = period;
-    const filtered = log.filter(e=> brandFilter==='전체' || e.brand===brandFilter);
-    const buckets = {};
-    filtered.forEach(e=>{
-      const key = bucketOf(e.date, period);
-      if(!buckets[key]) buckets[key] = {spend:0, purchases:0, roasSum:0, roasCount:0};
-      buckets[key].spend += e.spend||0;
-      buckets[key].purchases += e.purchases||0;
-      if(e.roas!=null){ buckets[key].roasSum += e.roas; buckets[key].roasCount++; }
-    });
-    const keys = Object.keys(buckets).sort();
-    const spendData = keys.map(k=>buckets[k].spend);
-    const roasData = keys.map(k=>buckets[k].roasCount? +(buckets[k].roasSum/buckets[k].roasCount).toFixed(2) : null);
+    dailyPeriod = document.getElementById('daily-period').value;
+    dailyBrand = document.getElementById('daily-brand').value;
+    dailyConceptFilter = document.getElementById('daily-concept').value;
+
+    const filtered = fullLog.filter(e=>
+      (dailyBrand==='전체' || e.brand===dailyBrand) &&
+      (dailyConceptFilter==='전체' || e.concept===dailyConceptFilter)
+    );
+
+    const { buckets, rangeLabel, prev, next } = getBuckets(dailyPeriod, dailyAnchor);
+    document.getElementById('daily-range-label').textContent = rangeLabel;
+
+    const agg = buckets.map(b => aggregateBucket(filtered.filter(b.match)));
+    const labels = buckets.map(b=>b.label);
+    const spendData = agg.map(a=>a.spend);
+    const roasData = agg.map(a=>a.avgRoas);
 
     const ctx = document.getElementById('daily-chart').getContext('2d');
     if(dailyChartInstance) dailyChartInstance.destroy();
     dailyChartInstance = new Chart(ctx, {
       data: {
-        labels: keys,
+        labels,
         datasets: [
-          {type:'bar', label:'지출(₩)', data:spendData, backgroundColor:'rgba(49,130,246,.35)', yAxisID:'y'},
-          {type:'line', label:'평균 ROAS', data:roasData, borderColor:'#12B886', backgroundColor:'#12B886', yAxisID:'y1', tension:.3}
+          {type:'bar', label:'지출 금액', data:spendData, backgroundColor:'rgba(49,130,246,.35)', yAxisID:'y'},
+          {type:'line', label:'평균 ROAS', data:roasData, borderColor:'#12B886', backgroundColor:'#12B886', yAxisID:'y1', tension:.3, spanGaps:true}
         ]
       },
       options: {
         responsive:true,
+        interaction:{ mode:'index', intersect:false },
+        plugins:{ tooltip:{ callbacks:{ label:(c)=> c.dataset.yAxisID==='y' ? `지출 금액: ${won(c.raw)}` : `평균 ROAS: ${c.raw==null?'—':c.raw.toFixed(2)}` } } },
         scales:{
-          y:{position:'left', title:{display:true,text:'지출(₩)'}},
-          y1:{position:'right', title:{display:true,text:'ROAS'}, grid:{drawOnChartArea:false}}
+          y:{ position:'left', title:{display:true,text:'지출 금액(원)'}, ticks:{ callback:(v)=>won(v) } },
+          y1:{ position:'right', title:{display:true,text:'평균 ROAS'}, grid:{drawOnChartArea:false} }
         }
       }
     });
 
     const table = document.getElementById('daily-table');
-    table.innerHTML = `<tr><th>구간</th><th class="num">지출</th><th class="num">구매</th><th class="num">평균 ROAS</th></tr>` +
-      keys.slice().reverse().map(k=>`<tr><td>${esc(k)}</td><td class="num">${won(buckets[k].spend)}</td><td class="num">${num(buckets[k].purchases)}</td><td class="num">${buckets[k].roasCount?roasFmt(buckets[k].roasSum/buckets[k].roasCount):'—'}</td></tr>`).join('');
+    table.innerHTML = `<tr><th>구간</th><th class="num">지출 금액</th><th class="num">구매수</th><th class="num">평균 ROAS</th><th class="num">CPC</th><th class="num">CPA</th></tr>` +
+      buckets.map((b,i)=>{
+        const a = agg[i];
+        return `<tr><td>${esc(b.label)}</td><td class="num">${won(a.spend)}</td><td class="num">${num(a.purchases)}</td><td class="num">${roasFmt(a.avgRoas)}</td><td class="num">${won(a.cpc)}</td><td class="num">${won(a.cpa)}</td></tr>`;
+      }).join('');
+
+    document.getElementById('daily-prev').onclick = ()=>{ dailyAnchor = prev(); draw(); };
+    document.getElementById('daily-next').onclick = ()=>{ dailyAnchor = next(); draw(); };
   }
+
   document.getElementById('daily-period').addEventListener('change', draw);
   document.getElementById('daily-brand').addEventListener('change', draw);
+  document.getElementById('daily-concept').addEventListener('change', draw);
   document.getElementById('daily-snapshot-btn').addEventListener('click', recordDailySnapshot);
   draw();
 }
