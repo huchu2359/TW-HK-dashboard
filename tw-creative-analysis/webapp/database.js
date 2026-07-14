@@ -2,7 +2,10 @@ const path = require('path');
 const fs = require('fs');
 const sqlite3 = require('sqlite3').verbose();
 
-const DB_PATH = path.join(__dirname, 'dashboard.db');
+const PERSISTENT_DIR = '/data';
+const DB_PATH = fs.existsSync(PERSISTENT_DIR)
+  ? path.join(PERSISTENT_DIR, 'dashboard.db')
+  : path.join(__dirname, 'dashboard.db');
 const db = new sqlite3.Database(DB_PATH);
 
 function run(sql, params = []) {
