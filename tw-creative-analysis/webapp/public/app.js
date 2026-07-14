@@ -127,7 +127,7 @@ function approvalTag(a){
 function brandColor(b){ return b==='셀라딕스'?'#3182F6':b==='락토메디'?'#12B886':b==='엑스퍼트리션'?'#FF9F1C':'#8B95A1'; }
 function perfFor(name, brand){ return REG().performance.find(p=>p.concept===name && p.brand===brand) || null; }
 function scriptByKey(name, brand){ return REG().scripts.find(s=>s.name===name && s.brand===brand); }
-const BRANDS_BY_REGION = { "대만": ["셀라딕스","락토메디","엑스퍼트리션"], "홍콩": ["셀라딕스"] };
+const BRANDS_BY_REGION = { "대만": ["셀라딕스","락토메디","엑스퍼트리션"], "홍콩": ["셀라딕스","락토메디","엑스퍼트리션"] };
 function BRANDS(){ return BRANDS_BY_REGION[currentRegion]; }
 let searchTerm = '';
 let currentTab = 'home';
