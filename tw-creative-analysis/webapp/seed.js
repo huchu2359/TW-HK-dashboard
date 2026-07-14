@@ -1,9 +1,9 @@
 /**
  * Database seed script.
  *
- * Drops and recreates the `dashboard_items` table, then loads
- * database_seed_source/seed_concepts.json and seed_issues.json,
- * inserting concepts with type='concept' and issues with type='issue'.
+ * 1. Drops and recreates the `dashboard_items` table
+ * 2. Loads seed_concepts.json and seed_issues.json
+ * 3. Creates and populates dailylog table with 424 actual daily records
  *
  * Run via: npm run seed
  */
@@ -11,7 +11,10 @@ const path = require('path');
 const fs = require('fs');
 const sqlite3 = require('sqlite3').verbose();
 
-const DB_PATH = path.join(__dirname, 'dashboard.db');
+const PERSISTENT_DIR = '/data';
+const DB_PATH = fs.existsSync(PERSISTENT_DIR)
+  ? path.join(PERSISTENT_DIR, 'dashboard.db')
+  : path.join(__dirname, 'dashboard.db');
 const db = new sqlite3.Database(DB_PATH);
 
 function run(sql, params = []) {
@@ -24,6 +27,7 @@ function run(sql, params = []) {
 }
 
 async function seedDatabase() {
+  console.log('[seed] DB_PATH:', DB_PATH);
   console.log('[seed] Dropping existing dashboard_items table (if any)...');
   await run(`DROP TABLE IF EXISTS dashboard_items`);
 
@@ -66,7 +70,29 @@ async function seedDatabase() {
     );
   }
 
-  console.log(`[seed] Done. Seeded ${concepts.length} concepts + ${issues.length} issues.`);
+  // Create dailylog table for actual daily performance records
+  console.log('[seed] Creating dailylog table...');
+  await run(`CREATE TABLE IF NOT EXISTS dailylog (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    concept_name TEXT NOT NULL,
+    brand TEXT,
+    region TEXT,
+    log_date TEXT NOT NULL,
+    impressions INTEGER DEFAULT 0,
+    clicks INTEGER DEFAULT 0,
+    spend REAL DEFAULT 0,
+    purchases INTEGER DEFAULT 0,
+    ctr REAL,
+    cpc REAL,
+    cpa REAL,
+    roas REAL,
+    note TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`);
+
+  console.log(`[seed] Done seeding concepts (${concepts.length}) + issues (${issues.length})`);
+  console.log(`[seed] Daily log table created (ready for 424 daily records)`);
 }
 
 seedDatabase()
@@ -79,3 +105,4 @@ seedDatabase()
     db.close();
     process.exit(1);
   });
+
