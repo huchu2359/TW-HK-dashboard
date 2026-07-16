@@ -666,7 +666,10 @@ function renderDaily(){
     dailyAnchor = parseDate(latest || todayStr());
   }
 
-  const conceptNames = Array.from(new Set(fullLog.map(e=>e.concept))).sort();
+  function conceptsForBrand(brand){
+    return Array.from(new Set(fullLog.filter(e=>brand==='전체'||e.brand===brand).map(e=>e.concept))).sort();
+  }
+  if(dailyConceptFilter!=='전체' && !conceptsForBrand(dailyBrand).includes(dailyConceptFilter)) dailyConceptFilter = '전체';
 
   let html = `<div class="page-head"><h2>일별/주별/월별 추이</h2><div class="sub">일단위(월요일 기준 7일) · 주단위(한 달을 4주로 분할) · 월단위(소재의 최초 집행월부터 이번 달까지) · 전체 기간(소재의 최초 집행일부터 오늘까지) 으로 조회합니다</div></div>`;
   html += `<div class="callout">데이터는 자동으로 매일 쌓이지 않고, 아래 <b>"오늘 스냅샷 기록"</b> 버튼을 하루 한 번 눌러야 그날 데이터가 누적됩니다.</div>`;
@@ -680,7 +683,7 @@ function renderDaily(){
     </select>
     <select id="daily-concept">
       <option value="전체" ${dailyConceptFilter==='전체'?'selected':''}>전체 소재</option>
-      ${conceptNames.map(c=>`<option ${dailyConceptFilter===c?'selected':''}>${esc(c)}</option>`).join('')}
+      ${conceptsForBrand(dailyBrand).map(c=>`<option ${dailyConceptFilter===c?'selected':''}>${esc(c)}</option>`).join('')}
     </select>
     <button id="daily-snapshot-btn" style="background:var(--primary);color:#fff;border:none;border-radius:10px;padding:8px 16px;font-size:12.5px;font-weight:700;cursor:pointer;">+ 오늘 스냅샷 기록</button>
   </div>`;
@@ -790,8 +793,17 @@ function renderDaily(){
     document.getElementById('daily-next').onclick = ()=>{ dailyAnchor = next(); draw(); };
   }
 
+  function refreshConceptOptions(){
+    const select = document.getElementById('daily-concept');
+    const brand = document.getElementById('daily-brand').value;
+    const names = conceptsForBrand(brand);
+    if(!names.includes(dailyConceptFilter)) dailyConceptFilter = '전체';
+    select.innerHTML = `<option value="전체">전체 소재</option>` +
+      names.map(c=>`<option ${dailyConceptFilter===c?'selected':''}>${esc(c)}</option>`).join('');
+  }
+
   document.getElementById('daily-period').addEventListener('change', draw);
-  document.getElementById('daily-brand').addEventListener('change', draw);
+  document.getElementById('daily-brand').addEventListener('change', ()=>{ refreshConceptOptions(); draw(); });
   document.getElementById('daily-concept').addEventListener('change', draw);
   document.getElementById('daily-metric').addEventListener('change', draw);
   document.getElementById('daily-snapshot-btn').addEventListener('click', recordDailySnapshot);
