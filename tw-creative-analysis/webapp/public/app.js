@@ -132,6 +132,22 @@ function BRANDS(){ return BRANDS_BY_REGION[currentRegion]; }
 let searchTerm = '';
 let currentTab = 'home';
 
+/* 승자 인트로 = 지출(spend)이 가장 높은 인트로. 다른 지표는 판정에 쓰지 않음. */
+function determineWinnerIntro(ip){
+  const introNums = Object.keys(ip.intros).map(Number);
+  let winner = introNums[0], maxSpend = -1;
+  introNums.forEach(n=>{ const sp = ip.intros[n].spend||0; if(sp > maxSpend){ maxSpend = sp; winner = n; } });
+  return winner;
+}
+/* 해당 소재(concept[+brand])의 dailyLog 최초 날짜부터 오늘까지 누적 일수. dailyLog가 없으면 null(판단 보류). */
+function daysTrackedFor(region, name, brand){
+  const log = (DATA.dailyLog[region]||[]).filter(e=>e.concept===name && (!brand || e.brand===brand));
+  if(!log.length) return null;
+  const minDate = log.reduce((m,e)=> (!m||e.date<m)?e.date:m, null);
+  return Math.floor((parseDate(todayStr()) - parseDate(minDate)) / 86400000) + 1;
+}
+const MIN_TRACKING_DAYS = 7;
+
 function highlight(name){
   const e = esc(name);
   if(!searchTerm) return e;
@@ -170,19 +186,25 @@ function openScriptModal(name, brand){
     </div>` : `<div class="callout" style="margin-top:8px;">아직 메타 성과 데이터가 없는 소재입니다 (매칭 전 또는 신규 개선안).</div>`;
 
   if(ip){
-    const maxSpend = Math.max(...Object.values(ip.intros).map(x=>x.spend));
-    html += `<div class="block-label">인트로별 성과 분해 ${ip.confident?'':' — 격차 '+ip.marginPct+'% (15% 미만, 근소한 차이)'}</div>`;
-    Object.keys(ip.intros).sort().forEach(k=>{
-      const v = ip.intros[k];
-      const isWinner = Number(k)===ip.winner;
-      const w = (v.spend/maxSpend*100).toFixed(1);
-      html += `<div class="introwin-row">
-        <div class="il">인트로${k}${isWinner?' 👑':''}</div>
-        <div class="itrack"><div class="ifill${isWinner?'':' loser'}" style="width:${w}%;"></div></div>
-        <div class="inum">${won(v.spend)}</div>
-      </div>`;
-    });
-    html += `<div class="sub" style="color:var(--muted);font-size:11.5px;margin-top:4px;">${ip.confident ? `승자: 인트로${ip.winner} (지출 기준, 격차 ${ip.marginPct}%)` : `1·2위 격차 ${ip.marginPct}% — 15% 미만이라 확정된 승자로 단정하지 않음`}</div>`;
+    const days = daysTrackedFor(currentRegion, name, brand);
+    if(days!=null && days < MIN_TRACKING_DAYS){
+      html += `<div class="block-label">인트로별 성과 분해</div><div class="callout">데이터 축적 중 (${days}/${MIN_TRACKING_DAYS}일) — 최소 ${MIN_TRACKING_DAYS}일치 데이터가 쌓이면 승자 인트로를 판정합니다.</div>`;
+    } else {
+      const winner = determineWinnerIntro(ip);
+      const maxSpend = Math.max(...Object.values(ip.intros).map(x=>x.spend));
+      html += `<div class="block-label">인트로별 성과 분해</div>`;
+      Object.keys(ip.intros).sort().forEach(k=>{
+        const v = ip.intros[k];
+        const isWinner = Number(k)===winner;
+        const w = (v.spend/maxSpend*100).toFixed(1);
+        html += `<div class="introwin-row">
+          <div class="il">인트로${k}${isWinner?' 👑':''}</div>
+          <div class="itrack"><div class="ifill${isWinner?'':' loser'}" style="width:${w}%;"></div></div>
+          <div class="inum">${won(v.spend)}</div>
+        </div>`;
+      });
+      html += `<div class="sub" style="color:var(--muted);font-size:11.5px;margin-top:4px;">승자: 인트로${winner} (지출 기준 최고)</div>`;
+    }
   }
 
   if(s.intent){
@@ -342,12 +364,14 @@ function renderSearch(){
     box.innerHTML = rows.map(s=>{
       const p = perfFor(s.name, s.brand);
       const ip = REG().introPerf[s.name];
+      const ipDays = ip ? daysTrackedFor(currentRegion, s.name, s.brand) : null;
+      const ipReady = ip && !(ipDays!=null && ipDays < MIN_TRACKING_DAYS);
       return `<div class="result-card" data-name="${esc(s.name)}" data-brand="${esc(s.brand)}">
         <div class="rc-head">
           <span class="rc-name">${highlight(s.name)}</span>
           ${matchTag(s.match)} ${verdictTag(s.verdict)} ${s.approval?approvalTag(s.approval):''}
         </div>
-        <div class="rc-meta">${esc(s.brand)} · ${esc(s.product)}${ip?` · 승자 인트로${ip.winner}${ip.confident?'':'(근소)'}`:''}</div>
+        <div class="rc-meta">${esc(s.brand)} · ${esc(s.product)}${ipReady?` · 승자 인트로${determineWinnerIntro(ip)}`:ip?` · 데이터 축적 중 (${ipDays}/${MIN_TRACKING_DAYS}일)`:''}</div>
         ${p ? `<div class="rc-stats" style="margin-top:8px;">
           <span>지출 <b>${won(p.spend)}</b></span>
           <span>ROAS <b>${roasFmt(p.roas)}</b></span>
@@ -493,32 +517,68 @@ function renderTrend(){
 }
 
 /* ===================== 저효율 인트로+개선방안 ===================== */
+let lowPerfRefreshing = false;
+async function refreshLowPerf(){
+  if(lowPerfRefreshing) return;
+  lowPerfRefreshing = true;
+  const btn = document.getElementById('lowperf-refresh-btn');
+  if(btn){ btn.disabled = true; btn.textContent = '⏳ 갱신 중...'; }
+  try{
+    const res = await fetch('/api/dashboard');
+    ITEMS = await res.json();
+    rebuildData();
+  }catch(e){
+    toast('새로고침 실패', true);
+  }finally{
+    lowPerfRefreshing = false;
+    renderLowPerf();
+    toast('최신 데이터로 갱신됐습니다 ✓');
+  }
+}
+
 function renderLowPerf(){
   if(!Object.keys(REG().introPerf).length){
     document.getElementById('shell').innerHTML = `<div class="page-head"><h2>저효율 인트로+개선방안</h2></div><div class="callout warn">${esc(currentRegion)} 인트로 비교 데이터가 아직 없습니다.</div>`;
     return;
   }
-  const rows = Object.entries(REG().introPerf).map(([name, ip])=>{
-    const introNums = Object.keys(ip.intros).map(Number);
-    const loserNum = introNums.filter(n=>n!==ip.winner).sort((a,b)=>ip.intros[a].spend-ip.intros[b].spend)[0];
-    const loser = ip.intros[String(loserNum)];
-    const winnerData = ip.intros[String(ip.winner)];
+  const allRows = Object.entries(REG().introPerf).map(([name, ip])=>{
     const sc = REG().scripts.find(s=>s.name===name);
+    const brand = sc?sc.brand:'';
+    const days = daysTrackedFor(currentRegion, name, brand);
+    if(days!=null && days < MIN_TRACKING_DAYS){
+      return { name, brand, pending:true, days };
+    }
+    const winner = determineWinnerIntro(ip);
+    const introNums = Object.keys(ip.intros).map(Number);
+    const loserNum = introNums.filter(n=>n!==winner).sort((a,b)=>ip.intros[a].spend-ip.intros[b].spend)[0];
+    const loser = ip.intros[String(loserNum)];
+    const winnerData = ip.intros[String(winner)];
     const loserText = sc ? (loserNum===1?sc.i1:loserNum===2?sc.i2:sc.i3) : '';
-    const winnerText = sc ? (ip.winner===1?sc.i1:ip.winner===2?sc.i2:sc.i3) : '';
+    const winnerText = sc ? (winner===1?sc.i1:winner===2?sc.i2:sc.i3) : '';
     const shareOfWinner = winnerData.spend ? (loser.spend/winnerData.spend*100) : 0;
-    return {name, brand:sc?sc.brand:'', loserNum, loser, loserText, winnerNum:ip.winner, winnerText, marginPct:ip.marginPct, confident:ip.confident, shareOfWinner, stale:ip.stale};
-  }).sort((a,b)=> a.confident===b.confident ? b.marginPct-a.marginPct : (a.confident? -1:1) );
+    return {name, brand, pending:false, loserNum, loser, loserText, winnerNum:winner, winnerText, shareOfWinner, stale:ip.stale};
+  }).sort((a,b)=> a.pending===b.pending ? (a.pending?0:a.shareOfWinner-b.shareOfWinner) : (a.pending? 1:-1) );
 
-  let html = `<div class="page-head"><h2>저효율 인트로 + 개선방안</h2><div class="sub">각 소재의 여러 인트로 중 반응이 가장 저조했던 인트로를 승자와 비교합니다. AI 피드백은 사람 검수 없이 바로 게재된 참고용 분석입니다.</div></div>`;
-  html += `<div class="callout">표본이 너무 작은 경우(노출 매우 적음)는 창작 문제가 아니라 예산 배분 문제일 수 있어 "표본 부족"으로 별도 표시했습니다.</div>`;
-  rows.forEach(r=>{
+  let html = `<div class="page-head" style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+    <div><h2>저효율 인트로 + 개선방안</h2><div class="sub">각 소재 내에서 지출(spend)이 가장 높은 인트로를 승자로 보고, 나머지 중 지출이 가장 낮은 인트로를 저효율로 비교합니다. AI 피드백은 사람 검수 없이 바로 게재된 참고용 분석입니다.</div></div>
+    <button id="lowperf-refresh-btn" style="background:var(--surface-alt);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:7px 14px;font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap;">🔄 새로고침</button>
+  </div>`;
+  html += `<div class="callout">최초 집행일 기준 ${MIN_TRACKING_DAYS}일 미만 누적된 소재는 "데이터 축적 중"으로 표시하고 승자 판정을 하지 않습니다.</div>`;
+  allRows.forEach(r=>{
+    if(r.pending){
+      html += `<div class="lowperf-card">
+        <div class="head">
+          <span class="name clickable" data-name="${esc(r.name)}" data-brand="${esc(r.brand)}" style="cursor:pointer;color:var(--primary);">${esc(r.name)}</span>
+          <span class="meta">${esc(r.brand)} <span class="tag learning" style="margin-left:6px;">데이터 축적 중 (${r.days}/${MIN_TRACKING_DAYS}일)</span></span>
+        </div>
+      </div>`;
+      return;
+    }
     const fb = REG().lowPerfFeedback[r.name];
     html += `<div class="lowperf-card">
       <div class="head">
         <span class="name clickable" data-name="${esc(r.name)}" data-brand="${esc(r.brand)}" style="cursor:pointer;color:var(--primary);">${esc(r.name)}</span>
         <span class="meta">${esc(r.brand)} · 인트로${r.loserNum} 지출 ${won(r.loser.spend)} (승자 인트로${r.winnerNum}의 ${r.shareOfWinner.toFixed(0)}% 수준)
-        ${r.confident?'':'<span class="tag learning" style="margin-left:6px;">격차 15% 미만 · 근소</span>'}
         ${fb && !fb.reliable?'<span class="tag pending" style="margin-left:6px;">표본 부족 주의</span>':''}
         ${r.stale?'<span class="tag stale" style="margin-left:6px;">최근 확인 안됨</span>':''}</span>
       </div>
@@ -543,6 +603,7 @@ function renderLowPerf(){
   document.querySelectorAll('.lowperf-card .name.clickable').forEach(el=>{
     el.addEventListener('click', ()=>openScriptModal(el.dataset.name, el.dataset.brand));
   });
+  document.getElementById('lowperf-refresh-btn').addEventListener('click', refreshLowPerf);
 }
 
 /* ===================== 일별/주별/월별/연별 추이 ===================== */
