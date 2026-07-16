@@ -124,6 +124,8 @@ th,td{padding:11px 12px;text-align:left;border-bottom:1px solid var(--border);}
 th{color:var(--muted);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.03em;}
 td.num{text-align:right;font-variant-numeric:tabular-nums;}
 tr:hover td{background:var(--surface-alt);}
+th.metric-active,td.metric-active{background:var(--primary-dim);color:var(--primary);}
+th.metric-active{color:var(--primary);}
 .clickable{cursor:pointer;}
 .name-link{color:var(--primary);font-weight:700;cursor:pointer;}
 
