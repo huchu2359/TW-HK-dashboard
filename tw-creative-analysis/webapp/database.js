@@ -96,6 +96,33 @@ async function createItem({ type, region, updatedBy, ...fields }) {
   return getItem(lastID);
 }
 
+// 대량 삽입(예: SM캠페인 일별 로그 백필) — 트랜잭션으로 묶어 개별 HTTP 왕복 없이 빠르게 적재
+function createItemsBulk(items) {
+  const now = new Date().toISOString();
+  return new Promise((resolve, reject) => {
+    db.serialize(() => {
+      db.run('BEGIN TRANSACTION');
+      const stmt = db.prepare(
+        `INSERT INTO dashboard_items (type, region, data, created_at, updated_at, updated_by) VALUES (?,?,?,?,?,?)`
+      );
+      let failed = null;
+      items.forEach(({ type, region, updatedBy, ...fields }) => {
+        stmt.run([type || 'concept', region || null, JSON.stringify(fields), now, now, updatedBy || null], (err) => {
+          if (err && !failed) failed = err;
+        });
+      });
+      stmt.finalize((err) => {
+        if (err && !failed) failed = err;
+        if (failed) {
+          db.run('ROLLBACK', () => reject(failed));
+        } else {
+          db.run('COMMIT', (cErr) => (cErr ? reject(cErr) : resolve({ count: items.length })));
+        }
+      });
+    });
+  });
+}
+
 async function updateItem(id, patch) {
   const existing = await get(`SELECT * FROM dashboard_items WHERE id = ?`, [id]);
   if (!existing) return null;
@@ -115,4 +142,4 @@ async function deleteItem(id) {
   return { id };
 }
 
-module.exports = { init, getAllItems, getItem, createItem, updateItem, deleteItem };
+module.exports = { init, getAllItems, getItem, createItem, createItemsBulk, updateItem, deleteItem };

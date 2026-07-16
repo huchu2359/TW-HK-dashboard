@@ -9,7 +9,7 @@ let toastTmr = null;
 function emptyRegion(){
   return { generatedAt:'실시간 동기화', scripts:[], performance:[], introPerf:{}, lowPerfFeedback:{}, dataIssues:[] };
 }
-let DATA = { regions: { "대만": emptyRegion(), "홍콩": emptyRegion() }, dailyLog: { "대만": [], "홍콩": [] } };
+let DATA = { regions: { "대만": emptyRegion(), "홍콩": emptyRegion() }, dailyLog: { "대만": [], "홍콩": [] }, smLog: { "대만": [], "홍콩": [] } };
 let currentRegion = '대만';
 const REGIONS = ['대만','홍콩'];
 function REG(){ return DATA.regions[currentRegion]; }
@@ -54,8 +54,16 @@ function rebuildData(){
     dlog[it.region].push({_id:it.id, date:it.date, brand:it.brand, concept:it.concept, impressions:it.impressions,
       clicks:it.clicks, spend:it.spend, purchases:it.purchases, ctr:it.ctr, cpm:it.cpm, cpc:it.cpc, cpa:it.cpa, roas:it.roas});
   });
+  const smlog = { "대만":[], "홍콩":[] };
+  ITEMS.filter(it=>it.type==='smlog').forEach(it=>{
+    if(!smlog[it.region]) smlog[it.region] = [];
+    smlog[it.region].push({_id:it.id, date:it.date, brand:it.brand, campaignId:it.campaignId, campaignName:it.campaignName,
+      adsetId:it.adsetId, adsetName:it.adsetName, adId:it.adId, adName:it.adName, impressions:it.impressions,
+      clicks:it.clicks, spend:it.spend, purchases:it.purchases, ctr:it.ctr, cpc:it.cpc, cpa:it.cpa, roas:it.roas});
+  });
   DATA.regions = regions;
   DATA.dailyLog = dlog;
+  DATA.smLog = smlog;
 }
 
 async function apiCreate(fields){
@@ -91,6 +99,7 @@ function initSocket(){
   socket.on('dashboard:delete', ({id})=>{
     ITEMS = ITEMS.filter(x=>x.id!==id); rebuildData(); renderRoute();
   });
+  socket.on('dashboard:bulkcreate', ()=>{ loadInitial(); toast('데이터가 대량 갱신됐습니다'); });
 }
 
 async function loadInitial(){
@@ -322,9 +331,7 @@ function renderHome(){
     </div>
     <div class="hero-nav">
       <div class="hero-nav-card" data-tab="search"><span class="ic">🔍</span><div class="t">소재 검색</div><div class="d">컨셉명으로 찾아 대본·성과·기획의도를 바로 확인</div></div>
-      <div class="hero-nav-card" data-tab="meta"><span class="ic">📡</span><div class="t">메타현황판</div><div class="d">매칭 현황과 최신 메타 성과를 한눈에</div></div>
-      <div class="hero-nav-card" data-tab="trend"><span class="ic">📈</span><div class="t">성과추이</div><div class="d">소재별 지출·CPC·CPA·ROAS·CTR·구매</div></div>
-      <div class="hero-nav-card" data-tab="daily"><span class="ic">🗓️</span><div class="t">일별/주별/월별 추이</div><div class="d">매일 누적되는 데이터로 기간별 그래프 확인</div></div>
+      <div class="hero-nav-card" data-tab="meta"><span class="ic">📡</span><div class="t">메타현황판</div><div class="d">기간·브랜드·SM캠페인·광고세트·소재명으로 드릴다운하는 성과 그래프</div></div>
       <div class="hero-nav-card" data-tab="lowperf"><span class="ic">🔻</span><div class="t">저효율 인트로+개선방안</div><div class="d">AI가 분석한 저조한 인트로와 수정 제안</div></div>
     </div>
   </div>`;
@@ -446,124 +453,260 @@ function renderSearch(){
   setTimeout(()=>document.getElementById('search-input').focus(), 50);
 }
 
-/* ===================== 메타현황판 ===================== */
-function renderMeta(){
-  if(!REG().scripts.length){
-    document.getElementById('shell').innerHTML = `<div class="page-head"><h2>메타현황판</h2></div><div class="callout warn">${REG().dataIssues && REG().dataIssues[0] ? `<b>${esc(REG().dataIssues[0].issue)}</b> — ${esc(REG().dataIssues[0].detail)}` : esc(currentRegion)+' 데이터가 아직 없습니다.'}</div>`;
-    return;
-  }
-  const total = REG().scripts.length;
-  const matched = REG().scripts.filter(s=>s.match==='매칭됨').length;
-  const unmatched = REG().scripts.filter(s=>s.match==='매칭안됨').length;
-  const pctMatched = (matched+unmatched) ? (matched/(matched+unmatched)*100).toFixed(1) : null;
-  const staleCount = REG().performance.filter(p=>p.stale).length;
-  let html = `<div class="page-head"><h2>메타현황판</h2><div class="sub">매칭 현황과 메타 성과를 최신 상태로 유지합니다 · ${esc(REG().generatedAt)}</div></div>`;
-  html += `<div class="grid cols-4">
-    <div class="card"><div class="label">전체 매칭률</div><div class="big" style="color:${pctMatched==null?'var(--muted)':pctMatched>=50?'var(--success)':'var(--danger)'}">${pctMatched==null?'—':pctMatched+'%'}</div><div class="sub">${pctMatched==null?'데이터 없음':'기준선 50% '+(pctMatched>=50?'통과':'미달')}</div></div>
-    <div class="card"><div class="label">매칭됨</div><div class="big" style="color:var(--success)">${matched}건</div></div>
-    <div class="card"><div class="label">매칭안됨</div><div class="big" style="color:var(--danger)">${unmatched}건</div></div>
-    <div class="card"><div class="label">최근 확인 안됨</div><div class="big" style="color:${staleCount?'var(--warning)':'var(--success)'}">${staleCount}건</div><div class="sub">재조회 시 광고 없음</div></div>
-  </div>`;
+/* ===================== 메타현황판 (성과추이 + 일별/주별/월별 추이 통합) ===================== */
+let metaPeriod = 'day';
+let metaBrand = '전체';
+let metaCampaign = '전체';
+let metaAdset = '전체';
+let metaAdSearch = '';
+let metaMetric = '전체';
+let metaAnchor = null;
+let metaChartInstance = null;
 
-  html += `<div class="section-title">브랜드별 매칭 현황</div><div class="card"><table>
-    <tr><th>브랜드</th><th class="num">매칭됨</th><th class="num">매칭안됨</th><th class="num">매칭률</th></tr>`;
-  BRANDS().forEach(b=>{
-    const m = REG().scripts.filter(s=>s.brand===b && s.match==='매칭됨').length;
-    const u = REG().scripts.filter(s=>s.brand===b && s.match==='매칭안됨').length;
-    const r = (m+u)? (m/(m+u)*100).toFixed(1) : '—';
-    html += `<tr><td>${esc(b)}</td><td class="num">${m}</td><td class="num">${u}</td><td class="num">${r}${r!=='—'?'%':''}</td></tr>`;
-  });
-  html += `</table></div>`;
+function smLogForRegion(){ return DATA.smLog[currentRegion] || []; }
 
-  html += `<div class="section-title">매칭된 소재 — 최신 성과 <span class="hint">클릭하면 상세 보기</span></div>
-  <div class="card" style="overflow-x:auto;"><table id="meta-matched-table">
-    <tr><th>컨셉명</th><th>브랜드</th><th class="num">지출</th><th class="num">ROAS</th><th class="num">CTR</th><th class="num">구매</th><th>상태</th></tr>
-    ${REG().scripts.filter(s=>s.match==='매칭됨').map(s=>{
-      const p = perfFor(s.name, s.brand);
-      return `<tr class="clickable" data-name="${esc(s.name)}" data-brand="${esc(s.brand)}">
-        <td class="name-link">${esc(s.name)}</td><td>${esc(s.brand)}</td>
-        <td class="num">${p?won(p.spend):'—'}</td><td class="num">${p?roasFmt(p.roas):'—'}</td><td class="num">${p?pct(p.ctr):'—'}</td><td class="num">${p?num(p.purchases):'—'}</td>
-        <td>${p&&p.stale?'<span class="tag stale">최근 확인 안됨</span>':'<span class="tag success">최신</span>'}</td>
-      </tr>`;
-    }).join('')}
-  </table></div>`;
-
-  html += `<div class="section-title">매칭안됨 소재 <span class="hint">수동 확인 필요</span></div><div class="card"><table>
-    <tr><th>컨셉명</th><th>브랜드</th><th>제품</th></tr>` +
-    REG().scripts.filter(s=>s.match==='매칭안됨').map(s=>`<tr><td>${esc(s.name)}</td><td>${esc(s.brand)}</td><td>${esc(s.product)}</td></tr>`).join('') +
-    `</table></div>`;
-
-  const confirmed = REG().scripts.filter(s=>s.approval==='확정');
-  if(confirmed.length){
-    html += `<div class="section-title">✔ 확정된 개선안</div><div class="card"><table>
-      <tr><th>컨셉명</th><th>브랜드</th><th>제품</th></tr>
-      ${confirmed.map(s=>`<tr><td>${esc(s.name)}</td><td>${esc(s.brand)}</td><td>${esc(s.product)}</td></tr>`).join('')}
-    </table></div>`;
-  }
-
-  if(REG().dataIssues.length){
-    html += `<div class="section-title">⚠ 데이터 매핑 이슈</div>`;
-    REG().dataIssues.forEach(d=>{ html += `<div class="callout warn"><b>${esc(d.issue)}</b> — ${esc(d.detail)}</div>`; });
-  }
-
-  document.getElementById('shell').innerHTML = html;
-  document.getElementById('meta-matched-table').addEventListener('click', e=>{
-    const tr = e.target.closest('tr.clickable'); if(!tr) return;
-    openScriptModal(tr.dataset.name, tr.dataset.brand);
-  });
+/* 캠페인 롤업(concept, isCampaignLevel:true)의 dailyLog는 신규 SM 광고 단위 데이터와 겹치므로 통합 뷰에서 제외 */
+function rollupConceptNames(){
+  return new Set(REG().performance.filter(p=>p.isCampaignLevel).map(p=>p.concept));
 }
 
-/* ===================== 성과추이 ===================== */
-function renderTrend(){
-  if(!REG().performance.length){
-    document.getElementById('shell').innerHTML = `<div class="page-head"><h2>성과추이</h2></div><div class="callout warn">${esc(currentRegion)} 성과 데이터가 아직 없습니다.</div>`;
+function combinedMetaLog(){
+  const rollups = rollupConceptNames();
+  const conceptRows = (DATA.dailyLog[currentRegion]||[])
+    .filter(e=>!rollups.has(e.concept))
+    .map(e=>({
+      date:e.date, brand:e.brand, spend:e.spend||0, clicks:e.clicks||0, purchases:e.purchases||0, roas:e.roas,
+      campaignName:null, adsetName:null, label:e.concept
+    }));
+  const smRows = smLogForRegion().map(e=>({
+    date:e.date, brand:e.brand, spend:e.spend||0, clicks:e.clicks||0, purchases:e.purchases||0, roas:e.roas,
+    campaignName:e.campaignName, adsetName:e.adsetName, label:e.adName
+  }));
+  return conceptRows.concat(smRows);
+}
+
+function smCampaignsForBrand(brand){
+  return Array.from(new Set(smLogForRegion().filter(e=>brand==='전체'||e.brand===brand).map(e=>e.campaignName))).sort();
+}
+function smAdsetsFor(brand, campaign){
+  if(campaign==='전체') return [];
+  return Array.from(new Set(smLogForRegion().filter(e=>(brand==='전체'||e.brand===brand) && e.campaignName===campaign).map(e=>e.adsetName))).sort();
+}
+
+function refreshMetaCampaignOptions(){
+  const sel = document.getElementById('meta-campaign'); if(!sel) return;
+  const names = smCampaignsForBrand(metaBrand);
+  if(!names.includes(metaCampaign)) metaCampaign = '전체';
+  sel.innerHTML = `<option value="전체">전체 캠페인</option>` + names.map(n=>`<option ${metaCampaign===n?'selected':''}>${esc(n)}</option>`).join('');
+}
+function refreshMetaAdsetOptions(){
+  const sel = document.getElementById('meta-adset'); if(!sel) return;
+  const names = smAdsetsFor(metaBrand, metaCampaign);
+  if(!names.includes(metaAdset)) metaAdset = '전체';
+  sel.innerHTML = `<option value="전체">전체 광고세트</option>` + names.map(n=>`<option ${metaAdset===n?'selected':''}>${esc(n)}</option>`).join('');
+  sel.disabled = metaCampaign==='전체';
+}
+
+function renderMeta(){
+  if(!metaAnchor){
+    const all = combinedMetaLog();
+    const latest = all.reduce((m,e)=> (!m||e.date>m)?e.date:m, null);
+    metaAnchor = parseDate(latest || todayStr());
+  }
+
+  let html = `<div class="page-head"><h2>메타현황판</h2><div class="sub">성과추이 · 일별/주별/월별 추이를 하나로 통합했습니다 — 기간 · 브랜드 · SM캠페인 · 광고세트 · 소재명으로 드릴다운해서 확인하세요</div></div>`;
+  html += `<div class="callout">일반 소재 데이터는 "오늘 스냅샷 기록" 버튼으로, SM캠페인 데이터는 채팅에서 갱신을 요청하면 최신화됩니다 (둘 다 자동 갱신은 아닙니다).</div>`;
+  html += `<div class="filter-bar">
+    <select id="meta-period">
+      ${[['day','일단위'],['week','주단위'],['month','월단위'],['all','전체 기간']].map(([v,l])=>`<option value="${v}" ${metaPeriod===v?'selected':''}>${l}</option>`).join('')}
+    </select>
+    <select id="meta-brand">
+      <option value="전체" ${metaBrand==='전체'?'selected':''}>전체 브랜드</option>
+      ${BRANDS().map(b=>`<option ${metaBrand===b?'selected':''}>${esc(b)}</option>`).join('')}
+    </select>
+    <select id="meta-campaign"></select>
+    <select id="meta-adset"></select>
+    <input id="meta-adsearch" type="text" placeholder="소재명(광고명) 검색..." value="${esc(metaAdSearch)}" style="min-width:160px;" />
+    <button id="meta-snapshot-btn" style="background:var(--primary);color:#fff;border:none;border-radius:10px;padding:8px 16px;font-size:12.5px;font-weight:700;cursor:pointer;">+ 오늘 스냅샷 기록</button>
+  </div>`;
+
+  const hasAny = combinedMetaLog().length > 0;
+  if(!hasAny){
+    html += `<div class="callout warn"><b>누적된 데이터가 없습니다.</b> "오늘 스냅샷 기록" 버튼을 눌러 첫 데이터를 쌓아보세요.</div>`;
+    document.getElementById('shell').innerHTML = html;
+    refreshMetaCampaignOptions(); refreshMetaAdsetOptions();
+    document.getElementById('meta-snapshot-btn').addEventListener('click', recordDailySnapshot);
     return;
   }
-  let html = `<div class="page-head"><h2>성과추이</h2><div class="sub">매칭된 소재별 지출·CPC·CPA·ROAS·CTR·구매를 한 화면에서 비교합니다</div></div>`;
-  html += `<div class="grid cols-3">`;
-  BRANDS().forEach(b=>{
-    const s = brandStats(b);
-    html += `<div class="card">
-      <div class="label">${esc(b)}</div>
-      <div class="big" style="color:${brandColor(b)}">${s.count?won(s.spend):'데이터 없음'}</div>
-      <div class="sub">평균 ROAS ${roasFmt(s.avgRoas)} · 평균 CTR ${pct(s.avgCtr)} · 평균 CPC ${s.avgCpc?won(s.avgCpc):'—'}</div>
-      <div class="sub">구매 누적 ${num(s.purchases)}건</div>
-    </div>`;
-  });
-  html += `</div>`;
 
-  html += `<div class="section-title">지출 순위 <span class="hint">클릭하면 대본 보기</span></div>`;
-  const maxSpend = Math.max(...REG().performance.map(r=>r.spend));
-  html += `<div class="card" id="trend-bars">`;
-  REG().performance.slice().sort((a,b)=>b.spend-a.spend).forEach(r=>{
-    const w = (r.spend/maxSpend*100).toFixed(1);
-    html += `<div class="barrow clickable" data-name="${esc(r.concept)}" data-brand="${esc(r.brand)}">
-      <div class="bl">${esc(r.concept)}</div>
-      <div class="btrack"><div class="bfill" style="width:${w}%;background:${brandColor(r.brand)};"></div></div>
-      <div class="bnum">${won(r.spend)}</div>
-    </div>`;
-  });
-  html += `</div>`;
+  html += `<div class="card">
+    <div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:10px;">
+      <button id="meta-prev" style="background:var(--surface-alt);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:5px 12px;font-size:13px;font-weight:700;cursor:pointer;">◀</button>
+      <span id="meta-range-label" style="font-size:13.5px;font-weight:700;color:var(--text);min-width:220px;text-align:center;"></span>
+      <button id="meta-next" style="background:var(--surface-alt);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:5px 12px;font-size:13px;font-weight:700;cursor:pointer;">▶</button>
+    </div>
+    <canvas id="meta-chart" height="90"></canvas>
+  </div>`;
+  html += `<div class="section-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+    <span>구간별 지표 <span class="hint">지출 금액 · 구매수 · 평균 ROAS · CPC · CPA</span></span>
+    <select id="meta-metric" style="margin-left:auto;">
+      ${[['전체','전체 지표'],...Object.entries(DAILY_METRICS).map(([k,m])=>[k,m.label])].map(([v,l])=>`<option value="${v}" ${metaMetric===v?'selected':''}>${l}</option>`).join('')}
+    </select>
+  </div>
+  <div class="card" style="overflow-x:auto;"><table id="meta-interval-table"></table></div>`;
 
-  html += `<div class="section-title">전체 지표 <span class="hint">지출·CPC·CPA·ROAS·CTR·구매</span></div>
-  <div class="card" style="overflow-x:auto;"><table id="trend-table">
-    <tr><th>컨셉명</th><th>브랜드</th><th class="num">지출</th><th class="num">CPC</th><th class="num">CPA</th><th class="num">ROAS</th><th class="num">CTR</th><th class="num">구매</th></tr>
-    ${REG().performance.slice().sort((a,b)=>b.spend-a.spend).map(r=>`<tr class="clickable" data-name="${esc(r.concept)}" data-brand="${esc(r.brand)}">
-      <td class="name-link">${esc(r.concept)}${r.stale?' <span class="tag stale">최근확인안됨</span>':''}${r.isCampaignLevel?' <span class="tag pending" title="'+esc(r.campaignNote||'')+'">캠페인 합계</span>':''}</td><td>${esc(r.brand)}</td>
-      <td class="num">${won(r.spend)}</td><td class="num">${r.cpc?won(r.cpc):'—'}</td><td class="num">${r.cpa?won(r.cpa):'—'}</td>
-      <td class="num">${roasFmt(r.roas)}</td><td class="num">${pct(r.ctr)}</td><td class="num">${num(r.purchases)}</td>
-    </tr>`).join('')}
-  </table></div>`;
+  html += `<div class="section-title" id="meta-rank-title">지출 순위</div>`;
+  html += `<div class="card" id="meta-rank-bars"></div>`;
+  html += `<div class="card" style="overflow-x:auto;"><table id="meta-rank-table"></table></div>`;
 
   document.getElementById('shell').innerHTML = html;
-  document.getElementById('trend-bars').addEventListener('click', e=>{
-    const row = e.target.closest('.barrow.clickable'); if(!row) return;
-    openScriptModal(row.dataset.name, row.dataset.brand);
-  });
-  document.getElementById('trend-table').addEventListener('click', e=>{
-    const tr = e.target.closest('tr.clickable'); if(!tr) return;
-    openScriptModal(tr.dataset.name, tr.dataset.brand);
-  });
+  refreshMetaCampaignOptions();
+  refreshMetaAdsetOptions();
+
+  function draw(){
+    metaPeriod = document.getElementById('meta-period').value;
+    metaBrand = document.getElementById('meta-brand').value;
+    metaCampaign = document.getElementById('meta-campaign').value;
+    metaAdset = document.getElementById('meta-adset').value;
+    metaAdSearch = document.getElementById('meta-adsearch').value;
+    metaMetric = document.getElementById('meta-metric').value;
+
+    const term = metaAdSearch.trim().toLowerCase();
+    const filtered = combinedMetaLog().filter(e=>
+      (metaBrand==='전체'||e.brand===metaBrand) &&
+      (metaCampaign==='전체'||e.campaignName===metaCampaign) &&
+      (metaAdset==='전체'||e.adsetName===metaAdset) &&
+      (!term || e.label.toLowerCase().includes(term))
+    );
+
+    const sortedDates = filtered.map(e=>e.date).sort();
+    const dateRange = sortedDates.length ? { min: sortedDates[0], max: sortedDates[sortedDates.length-1] } : null;
+    const { buckets, rangeLabel, prev, next } = getBuckets(metaPeriod, metaAnchor, dateRange);
+    document.getElementById('meta-range-label').textContent = rangeLabel;
+    const isAll = metaPeriod === 'all' || metaPeriod === 'month';
+    document.getElementById('meta-prev').style.visibility = isAll ? 'hidden' : 'visible';
+    document.getElementById('meta-next').style.visibility = isAll ? 'hidden' : 'visible';
+
+    const agg = buckets.map(b => aggregateBucket(filtered.filter(b.match)));
+    const labels = buckets.map(b=>b.label);
+
+    const ctx = document.getElementById('meta-chart').getContext('2d');
+    if(metaChartInstance) metaChartInstance.destroy();
+    if(metaMetric === '전체'){
+      const spendData = agg.map(a=>a.spend);
+      const roasData = agg.map(a=>a.avgRoas);
+      metaChartInstance = new Chart(ctx, {
+        data: { labels, datasets: [
+          {type:'bar', label:'지출 금액', data:spendData, backgroundColor:'rgba(49,130,246,.35)', yAxisID:'y'},
+          {type:'line', label:'평균 ROAS', data:roasData, borderColor:'#12B886', backgroundColor:'#12B886', yAxisID:'y1', tension:.3, spanGaps:true}
+        ]},
+        options: {
+          responsive:true, interaction:{ mode:'index', intersect:false },
+          plugins:{ tooltip:{ callbacks:{ label:(c)=> c.dataset.yAxisID==='y' ? `지출 금액: ${won(c.raw)}` : `평균 ROAS: ${c.raw==null?'—':c.raw.toFixed(2)}` } } },
+          scales:{
+            y:{ position:'left', title:{display:true,text:'지출 금액(원)'}, ticks:{ callback:(v)=>won(v) } },
+            y1:{ position:'right', title:{display:true,text:'평균 ROAS'}, grid:{drawOnChartArea:false} }
+          }
+        }
+      });
+    } else {
+      const m = DAILY_METRICS[metaMetric];
+      const data = agg.map(a=>m.get(a));
+      metaChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: { labels, datasets: [{ label:m.label, data, backgroundColor:m.color }] },
+        options: {
+          responsive:true,
+          plugins:{ tooltip:{ callbacks:{ label:(c)=> `${m.label}: ${m.fmt(c.raw)}` } } },
+          scales:{ y:{ title:{display:true,text:m.label}, ticks:{ callback:(v)=>m.fmt(v) } } }
+        }
+      });
+    }
+
+    const cols = [
+      { key:'label', header:'구간', num:false },
+      { key:'spend', header:'지출 금액', num:true },
+      { key:'purchases', header:'구매수', num:true },
+      { key:'roas', header:'평균 ROAS', num:true },
+      { key:'cpc', header:'CPC', num:true },
+      { key:'cpa', header:'CPA', num:true }
+    ];
+    const table = document.getElementById('meta-interval-table');
+    table.innerHTML = `<tr>${cols.map(c=>`<th class="${c.num?'num':''}${metaMetric===c.key?' metric-active':''}">${c.header}</th>`).join('')}</tr>` +
+      buckets.map((b,i)=>{
+        const a = agg[i];
+        const values = { label: esc(b.label), spend: won(a.spend), purchases: num(a.purchases), roas: roasFmt(a.avgRoas), cpc: won(a.cpc), cpa: won(a.cpa) };
+        return `<tr>${cols.map(c=>`<td class="${c.num?'num':''}${metaMetric===c.key?' metric-active':''}">${values[c.key]}</td>`).join('')}</tr>`;
+      }).join('');
+
+    document.getElementById('meta-prev').onclick = ()=>{ metaAnchor = prev(); draw(); };
+    document.getElementById('meta-next').onclick = ()=>{ metaAnchor = next(); draw(); };
+
+    /* 랭킹: 드릴다운 단계에 따라 캠페인 → 광고세트 → 광고(소재명) 단위로 그룹핑 */
+    const groupKey = metaAdset!=='전체' ? (e=>e.label) : metaCampaign!=='전체' ? (e=>e.adsetName||e.label) : (e=>e.campaignName||e.label);
+    const rankTitle = metaAdset!=='전체' ? '광고(소재명)별 성과' : metaCampaign!=='전체' ? '광고세트별 성과' : '캠페인/소재별 성과';
+    document.getElementById('meta-rank-title').innerHTML = `${rankTitle} <span class="hint">클릭하면 드릴다운${metaCampaign==='전체'?' · 일반 소재는 대본 보기':''}</span>`;
+
+    const groups = {};
+    filtered.forEach(e=>{
+      const k = groupKey(e);
+      if(!groups[k]) groups[k] = { key:k, spend:0, purchases:0, clicks:0, roasSum:0, roasCount:0, brand:e.brand, hasCampaign:false, kind: metaAdset!=='전체'?'ad':metaCampaign!=='전체'?'adset':'campaign' };
+      const g = groups[k];
+      g.spend += e.spend; g.purchases += e.purchases; g.clicks += e.clicks;
+      if(e.campaignName) g.hasCampaign = true;
+      if(e.roas!=null){ g.roasSum += e.roas; g.roasCount++; }
+    });
+    const rankRows = Object.values(groups).map(g=>({
+      ...g, avgRoas: g.roasCount? g.roasSum/g.roasCount : null,
+      cpc: g.clicks? g.spend/g.clicks : null,
+      cpa: g.purchases? g.spend/g.purchases : null
+    })).sort((a,b)=>b.spend-a.spend);
+
+    const maxSpend = Math.max(1, ...rankRows.map(r=>r.spend));
+    const barsEl = document.getElementById('meta-rank-bars');
+    barsEl.innerHTML = rankRows.map(r=>{
+      const w = (r.spend/maxSpend*100).toFixed(1);
+      return `<div class="barrow clickable" data-key="${esc(r.key)}" data-kind="${r.kind}" data-hascampaign="${r.hasCampaign}" data-brand="${esc(r.brand)}">
+        <div class="bl">${esc(r.key)}</div>
+        <div class="btrack"><div class="bfill" style="width:${w}%;background:${brandColor(r.brand)};"></div></div>
+        <div class="bnum">${won(r.spend)}</div>
+      </div>`;
+    }).join('');
+
+    const rankTable = document.getElementById('meta-rank-table');
+    rankTable.innerHTML = `<tr><th>이름</th><th>브랜드</th><th class="num">지출</th><th class="num">CPC</th><th class="num">CPA</th><th class="num">ROAS</th><th class="num">구매</th></tr>` +
+      rankRows.map(r=>`<tr class="clickable" data-key="${esc(r.key)}" data-kind="${r.kind}" data-hascampaign="${r.hasCampaign}" data-brand="${esc(r.brand)}">
+        <td class="name-link">${esc(r.key)}</td><td>${esc(r.brand)}</td>
+        <td class="num">${won(r.spend)}</td><td class="num">${r.cpc?won(r.cpc):'—'}</td><td class="num">${r.cpa?won(r.cpa):'—'}</td>
+        <td class="num">${roasFmt(r.avgRoas)}</td><td class="num">${num(r.purchases)}</td>
+      </tr>`).join('');
+
+    function handleRankClick(el){
+      const key = el.dataset.key, kind = el.dataset.kind, hasCampaign = el.dataset.hascampaign==='true', brand = el.dataset.brand;
+      if(!hasCampaign){ openScriptModal(key, brand); return; }
+      if(kind==='campaign'){
+        metaCampaign = key; metaAdset = '전체';
+        refreshMetaCampaignOptions(); refreshMetaAdsetOptions(); draw();
+      } else if(kind==='adset'){
+        metaAdset = key;
+        refreshMetaAdsetOptions(); draw();
+      } else {
+        const g = groups[key];
+        toast(`${key} · 지출 ${won(g?g.spend:0)} · 구매 ${num(g?g.purchases:0)} · ROAS ${roasFmt(g?(g.roasCount?g.roasSum/g.roasCount:null):null)}`);
+      }
+    }
+    barsEl.querySelectorAll('.barrow.clickable').forEach(el=>el.addEventListener('click', ()=>handleRankClick(el)));
+    rankTable.querySelectorAll('tr.clickable').forEach(el=>el.addEventListener('click', ()=>handleRankClick(el)));
+  }
+
+  document.getElementById('meta-period').addEventListener('change', draw);
+  document.getElementById('meta-brand').addEventListener('change', ()=>{ metaBrand = document.getElementById('meta-brand').value; refreshMetaCampaignOptions(); refreshMetaAdsetOptions(); draw(); });
+  document.getElementById('meta-campaign').addEventListener('change', ()=>{ metaCampaign = document.getElementById('meta-campaign').value; metaAdset='전체'; refreshMetaAdsetOptions(); draw(); });
+  document.getElementById('meta-adset').addEventListener('change', draw);
+  document.getElementById('meta-adsearch').addEventListener('input', draw);
+  document.getElementById('meta-metric').addEventListener('change', draw);
+  document.getElementById('meta-snapshot-btn').addEventListener('click', recordDailySnapshot);
+  draw();
 }
 
 /* ===================== 저효율 인트로+개선방안 ===================== */
@@ -656,14 +799,7 @@ function renderLowPerf(){
   document.getElementById('lowperf-refresh-btn').addEventListener('click', refreshLowPerf);
 }
 
-/* ===================== 일별/주별/월별/연별 추이 ===================== */
-let dailyPeriod = 'day';
-let dailyBrand = '전체';
-let dailyConceptFilter = '전체';
-let dailyMetric = '전체';
-let dailyAnchor = null;
-let dailyChartInstance = null;
-
+/* ===================== 기간 버킷/집계 유틸 (메타현황판에서 사용) ===================== */
 const DAILY_METRICS = {
   spend:     { label: '지출 금액',   get:a=>a.spend,    fmt: won,     color: 'rgba(49,130,246,.55)' },
   purchases: { label: '구매수',      get:a=>a.purchases, fmt: num,     color: 'rgba(18,184,134,.55)' },
@@ -769,160 +905,8 @@ async function recordDailySnapshot(){
   toast(`${date} 스냅샷 기록 완료 (${rows.length}건)`);
 }
 
-function renderDaily(){
-  const fullLog = DATA.dailyLog[currentRegion] || [];
-
-  if(!dailyAnchor){
-    const latest = fullLog.reduce((m,e)=> (!m || e.date>m) ? e.date : m, null);
-    dailyAnchor = parseDate(latest || todayStr());
-  }
-
-  function conceptsForBrand(brand){
-    return Array.from(new Set(fullLog.filter(e=>brand==='전체'||e.brand===brand).map(e=>e.concept))).sort();
-  }
-  if(dailyConceptFilter!=='전체' && !conceptsForBrand(dailyBrand).includes(dailyConceptFilter)) dailyConceptFilter = '전체';
-
-  let html = `<div class="page-head"><h2>일별/주별/월별 추이</h2><div class="sub">일단위(월요일 기준 7일) · 주단위(한 달을 4주로 분할) · 월단위(소재의 최초 집행월부터 이번 달까지) · 전체 기간(소재의 최초 집행일부터 오늘까지) 으로 조회합니다</div></div>`;
-  html += `<div class="callout">데이터는 자동으로 매일 쌓이지 않고, 아래 <b>"오늘 스냅샷 기록"</b> 버튼을 하루 한 번 눌러야 그날 데이터가 누적됩니다.</div>`;
-  html += `<div class="filter-bar">
-    <select id="daily-period">
-      ${[['day','일단위'],['week','주단위'],['month','월단위'],['all','전체 기간']].map(([v,l])=>`<option value="${v}" ${dailyPeriod===v?'selected':''}>${l}</option>`).join('')}
-    </select>
-    <select id="daily-brand">
-      <option value="전체" ${dailyBrand==='전체'?'selected':''}>전체 브랜드</option>
-      ${BRANDS().map(b=>`<option ${dailyBrand===b?'selected':''}>${esc(b)}</option>`).join('')}
-    </select>
-    <select id="daily-concept">
-      <option value="전체" ${dailyConceptFilter==='전체'?'selected':''}>전체 소재</option>
-      ${conceptsForBrand(dailyBrand).map(c=>`<option ${dailyConceptFilter===c?'selected':''}>${esc(c)}</option>`).join('')}
-    </select>
-    <button id="daily-snapshot-btn" style="background:var(--primary);color:#fff;border:none;border-radius:10px;padding:8px 16px;font-size:12.5px;font-weight:700;cursor:pointer;">+ 오늘 스냅샷 기록</button>
-  </div>`;
-
-  if(!fullLog.length){
-    html += `<div class="callout warn"><b>누적된 일별 데이터가 없습니다.</b> "오늘 스냅샷 기록" 버튼을 눌러 첫 데이터를 쌓아보세요.</div>`;
-    document.getElementById('shell').innerHTML = html;
-    document.getElementById('daily-snapshot-btn').addEventListener('click', recordDailySnapshot);
-    return;
-  }
-
-  html += `<div class="card">
-    <div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:10px;">
-      <button id="daily-prev" style="background:var(--surface-alt);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:5px 12px;font-size:13px;font-weight:700;cursor:pointer;">◀</button>
-      <span id="daily-range-label" style="font-size:13.5px;font-weight:700;color:var(--text);min-width:220px;text-align:center;"></span>
-      <button id="daily-next" style="background:var(--surface-alt);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:5px 12px;font-size:13px;font-weight:700;cursor:pointer;">▶</button>
-    </div>
-    <canvas id="daily-chart" height="90"></canvas>
-  </div>`;
-  html += `<div class="section-title" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-    <span>구간별 지표 <span class="hint">지출 금액 · 구매수 · 평균 ROAS · CPC · CPA</span></span>
-    <select id="daily-metric" style="margin-left:auto;">
-      ${[['전체','전체 지표'],...Object.entries(DAILY_METRICS).map(([k,m])=>[k,m.label])].map(([v,l])=>`<option value="${v}" ${dailyMetric===v?'selected':''}>${l}</option>`).join('')}
-    </select>
-  </div>
-  <div class="card" style="overflow-x:auto;"><table id="daily-table"></table></div>`;
-  document.getElementById('shell').innerHTML = html;
-
-  function draw(){
-    dailyPeriod = document.getElementById('daily-period').value;
-    dailyBrand = document.getElementById('daily-brand').value;
-    dailyConceptFilter = document.getElementById('daily-concept').value;
-    dailyMetric = document.getElementById('daily-metric').value;
-
-    const filtered = fullLog.filter(e=>
-      (dailyBrand==='전체' || e.brand===dailyBrand) &&
-      (dailyConceptFilter==='전체' || e.concept===dailyConceptFilter)
-    );
-
-    const sortedDates = filtered.map(e=>e.date).sort();
-    const dateRange = sortedDates.length ? { min: sortedDates[0], max: sortedDates[sortedDates.length-1] } : null;
-
-    const { buckets, rangeLabel, prev, next } = getBuckets(dailyPeriod, dailyAnchor, dateRange);
-    document.getElementById('daily-range-label').textContent = rangeLabel;
-    const isAll = dailyPeriod === 'all' || dailyPeriod === 'month';
-    document.getElementById('daily-prev').style.visibility = isAll ? 'hidden' : 'visible';
-    document.getElementById('daily-next').style.visibility = isAll ? 'hidden' : 'visible';
-
-    const agg = buckets.map(b => aggregateBucket(filtered.filter(b.match)));
-    const labels = buckets.map(b=>b.label);
-
-    const ctx = document.getElementById('daily-chart').getContext('2d');
-    if(dailyChartInstance) dailyChartInstance.destroy();
-
-    if(dailyMetric === '전체'){
-      const spendData = agg.map(a=>a.spend);
-      const roasData = agg.map(a=>a.avgRoas);
-      dailyChartInstance = new Chart(ctx, {
-        data: {
-          labels,
-          datasets: [
-            {type:'bar', label:'지출 금액', data:spendData, backgroundColor:'rgba(49,130,246,.35)', yAxisID:'y'},
-            {type:'line', label:'평균 ROAS', data:roasData, borderColor:'#12B886', backgroundColor:'#12B886', yAxisID:'y1', tension:.3, spanGaps:true}
-          ]
-        },
-        options: {
-          responsive:true,
-          interaction:{ mode:'index', intersect:false },
-          plugins:{ tooltip:{ callbacks:{ label:(c)=> c.dataset.yAxisID==='y' ? `지출 금액: ${won(c.raw)}` : `평균 ROAS: ${c.raw==null?'—':c.raw.toFixed(2)}` } } },
-          scales:{
-            y:{ position:'left', title:{display:true,text:'지출 금액(원)'}, ticks:{ callback:(v)=>won(v) } },
-            y1:{ position:'right', title:{display:true,text:'평균 ROAS'}, grid:{drawOnChartArea:false} }
-          }
-        }
-      });
-    } else {
-      const m = DAILY_METRICS[dailyMetric];
-      const data = agg.map(a=>m.get(a));
-      dailyChartInstance = new Chart(ctx, {
-        type: 'bar',
-        data: { labels, datasets: [{ label:m.label, data, backgroundColor:m.color }] },
-        options: {
-          responsive:true,
-          plugins:{ tooltip:{ callbacks:{ label:(c)=> `${m.label}: ${m.fmt(c.raw)}` } } },
-          scales:{ y:{ title:{display:true,text:m.label}, ticks:{ callback:(v)=>m.fmt(v) } } }
-        }
-      });
-    }
-
-    const cols = [
-      { key:'label', header:'구간', num:false },
-      { key:'spend', header:'지출 금액', num:true },
-      { key:'purchases', header:'구매수', num:true },
-      { key:'roas', header:'평균 ROAS', num:true },
-      { key:'cpc', header:'CPC', num:true },
-      { key:'cpa', header:'CPA', num:true }
-    ];
-    const table = document.getElementById('daily-table');
-    table.innerHTML = `<tr>${cols.map(c=>`<th class="${c.num?'num':''}${dailyMetric===c.key?' metric-active':''}">${c.header}</th>`).join('')}</tr>` +
-      buckets.map((b,i)=>{
-        const a = agg[i];
-        const values = { label: esc(b.label), spend: won(a.spend), purchases: num(a.purchases), roas: roasFmt(a.avgRoas), cpc: won(a.cpc), cpa: won(a.cpa) };
-        return `<tr>${cols.map(c=>`<td class="${c.num?'num':''}${dailyMetric===c.key?' metric-active':''}">${values[c.key]}</td>`).join('')}</tr>`;
-      }).join('');
-
-    document.getElementById('daily-prev').onclick = ()=>{ dailyAnchor = prev(); draw(); };
-    document.getElementById('daily-next').onclick = ()=>{ dailyAnchor = next(); draw(); };
-  }
-
-  function refreshConceptOptions(){
-    const select = document.getElementById('daily-concept');
-    const brand = document.getElementById('daily-brand').value;
-    const names = conceptsForBrand(brand);
-    if(!names.includes(dailyConceptFilter)) dailyConceptFilter = '전체';
-    select.innerHTML = `<option value="전체">전체 소재</option>` +
-      names.map(c=>`<option ${dailyConceptFilter===c?'selected':''}>${esc(c)}</option>`).join('');
-  }
-
-  document.getElementById('daily-period').addEventListener('change', draw);
-  document.getElementById('daily-brand').addEventListener('change', ()=>{ refreshConceptOptions(); draw(); });
-  document.getElementById('daily-concept').addEventListener('change', draw);
-  document.getElementById('daily-metric').addEventListener('change', draw);
-  document.getElementById('daily-snapshot-btn').addEventListener('click', recordDailySnapshot);
-  draw();
-}
-
 /* ===================== ROUTER ===================== */
-const RENDERERS = { home: renderHome, search: renderSearch, meta: renderMeta, trend: renderTrend, daily: renderDaily, lowperf: renderLowPerf };
+const RENDERERS = { home: renderHome, search: renderSearch, meta: renderMeta, lowperf: renderLowPerf };
 function renderRoute(){ (RENDERERS[currentTab] || renderHome)(); }
 function goTab(tab){
   currentTab = tab;
