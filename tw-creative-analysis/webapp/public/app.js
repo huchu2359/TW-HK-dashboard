@@ -302,7 +302,7 @@ function renderHome(){
       <div class="hero-nav-card" data-tab="search"><span class="ic">🔍</span><div class="t">소재 검색</div><div class="d">컨셉명으로 찾아 대본·성과·기획의도를 바로 확인</div></div>
       <div class="hero-nav-card" data-tab="meta"><span class="ic">📡</span><div class="t">메타현황판</div><div class="d">매칭 현황과 최신 메타 성과를 한눈에</div></div>
       <div class="hero-nav-card" data-tab="trend"><span class="ic">📈</span><div class="t">성과추이</div><div class="d">소재별 지출·CPC·CPA·ROAS·CTR·구매</div></div>
-      <div class="hero-nav-card" data-tab="daily"><span class="ic">🗓️</span><div class="t">일별/주별/월별/연별 추이</div><div class="d">매일 누적되는 데이터로 기간별 그래프 확인</div></div>
+      <div class="hero-nav-card" data-tab="daily"><span class="ic">🗓️</span><div class="t">일별/주별/월별 추이</div><div class="d">매일 누적되는 데이터로 기간별 그래프 확인</div></div>
       <div class="hero-nav-card" data-tab="lowperf"><span class="ic">🔻</span><div class="t">저효율 인트로+개선방안</div><div class="d">AI가 분석한 저조한 인트로와 수정 제안</div></div>
     </div>
   </div>`;
@@ -609,14 +609,21 @@ function getBuckets(period, anchor, dateRange){
     });
     return { buckets, rangeLabel, prev:()=>addMonths(monthStart,-1), next:()=>addMonths(monthStart,1) };
   }
-  const y = anchor.getFullYear();
-  const yearStart = new Date(y,0,1);
-  const rangeLabel = `${y}년 (1~12월)`;
-  const buckets = Array.from({length:12},(_,i)=>({
-    key:`${y}-${String(i+1).padStart(2,'0')}`, label:`${i+1}월`,
-    match: ev => ev.date.slice(0,7) === `${y}-${String(i+1).padStart(2,'0')}`
-  }));
-  return { buckets, rangeLabel, prev:()=>addYears(yearStart,-1), next:()=>addYears(yearStart,1) };
+  // period === 'month': 소재의 최초 집행월부터 이번 달까지, 월 단위로 표시
+  if(!dateRange){
+    return { buckets: [], rangeLabel: '데이터 없음', prev:()=>anchor, next:()=>anchor };
+  }
+  const start = parseDate(dateRange.min);
+  const monthStart = new Date(start.getFullYear(), start.getMonth(), 1);
+  const today = parseDate(todayStr());
+  const months = [];
+  for(let d=monthStart; d<=today; d=addMonths(d,1)) months.push(d);
+  const rangeLabel = `${months[0].getFullYear()}년 ${months[0].getMonth()+1}월 ~ ${months[months.length-1].getFullYear()}년 ${months[months.length-1].getMonth()+1}월 (최초 집행월부터 전체 ${months.length}개월)`;
+  const buckets = months.map(d=>{
+    const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    return { key, label:`${d.getFullYear()}년 ${d.getMonth()+1}월`, match: ev => ev.date.slice(0,7) === key };
+  });
+  return { buckets, rangeLabel, prev:()=>anchor, next:()=>anchor };
 }
 
 function aggregateBucket(entries){
@@ -661,11 +668,11 @@ function renderDaily(){
 
   const conceptNames = Array.from(new Set(fullLog.map(e=>e.concept))).sort();
 
-  let html = `<div class="page-head"><h2>일별/주별/연별 추이</h2><div class="sub">일단위(월요일 기준 7일) · 주단위(한 달을 4주로 분할) · 연단위(1~12월) · 전체 기간(소재의 최초 집행일부터 오늘까지) 으로 조회합니다</div></div>`;
+  let html = `<div class="page-head"><h2>일별/주별/월별 추이</h2><div class="sub">일단위(월요일 기준 7일) · 주단위(한 달을 4주로 분할) · 월단위(소재의 최초 집행월부터 이번 달까지) · 전체 기간(소재의 최초 집행일부터 오늘까지) 으로 조회합니다</div></div>`;
   html += `<div class="callout">데이터는 자동으로 매일 쌓이지 않고, 아래 <b>"오늘 스냅샷 기록"</b> 버튼을 하루 한 번 눌러야 그날 데이터가 누적됩니다.</div>`;
   html += `<div class="filter-bar">
     <select id="daily-period">
-      ${[['day','일단위'],['week','주단위'],['year','연단위'],['all','전체 기간']].map(([v,l])=>`<option value="${v}" ${dailyPeriod===v?'selected':''}>${l}</option>`).join('')}
+      ${[['day','일단위'],['week','주단위'],['month','월단위'],['all','전체 기간']].map(([v,l])=>`<option value="${v}" ${dailyPeriod===v?'selected':''}>${l}</option>`).join('')}
     </select>
     <select id="daily-brand">
       <option value="전체" ${dailyBrand==='전체'?'selected':''}>전체 브랜드</option>
@@ -718,7 +725,7 @@ function renderDaily(){
 
     const { buckets, rangeLabel, prev, next } = getBuckets(dailyPeriod, dailyAnchor, dateRange);
     document.getElementById('daily-range-label').textContent = rangeLabel;
-    const isAll = dailyPeriod === 'all';
+    const isAll = dailyPeriod === 'all' || dailyPeriod === 'month';
     document.getElementById('daily-prev').style.visibility = isAll ? 'hidden' : 'visible';
     document.getElementById('daily-next').style.visibility = isAll ? 'hidden' : 'visible';
 
