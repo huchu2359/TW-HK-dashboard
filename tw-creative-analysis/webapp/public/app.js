@@ -332,6 +332,49 @@ function renderHome(){
   document.querySelectorAll('.hero-nav-card').forEach(el=>el.addEventListener('click', ()=>goTab(el.dataset.tab)));
 }
 
+/* 브랜드 평균 대비 ROAS/CPA가 우수한 소재("주목해야할 소재")를 찾고, 그 소재들의 공통점을 요약한다. */
+function computeStandouts(){
+  const perfList = REG().performance.filter(p=>!p.isCampaignLevel);
+  const byBrand = {};
+  perfList.forEach(p=>{
+    if(!byBrand[p.brand]) byBrand[p.brand] = { roasSum:0, roasCount:0, cpaSum:0, cpaCount:0 };
+    const b = byBrand[p.brand];
+    if(p.roas!=null){ b.roasSum+=p.roas; b.roasCount++; }
+    if(p.cpa!=null){ b.cpaSum+=p.cpa; b.cpaCount++; }
+  });
+  const avg = {};
+  Object.entries(byBrand).forEach(([b,v])=>{ avg[b] = { roas: v.roasCount? v.roasSum/v.roasCount:null, cpa: v.cpaCount? v.cpaSum/v.cpaCount:null }; });
+
+  const standouts = {};
+  REG().scripts.forEach(s=>{
+    const p = perfFor(s.name, s.brand);
+    if(!p || !(p.purchases>0)) return;
+    const a = avg[s.brand]; if(!a) return;
+    const roasGood = p.roas!=null && a.roas!=null && p.roas >= a.roas*1.2;
+    const cpaGood = p.cpa!=null && a.cpa!=null && p.cpa <= a.cpa*0.8;
+    if(roasGood || cpaGood){
+      (standouts[s.brand] = standouts[s.brand]||[]).push(s);
+    }
+  });
+
+  const reasons = {};
+  Object.entries(standouts).forEach(([brand, list])=>{
+    const benefitCount = {};
+    list.forEach(s=> (s.benefits||[]).forEach(b=> benefitCount[b]=(benefitCount[b]||0)+1));
+    const topBenefits = Object.entries(benefitCount).sort((a,b)=>b[1]-a[1]).filter(([,c])=>c>=2).slice(0,2).map(([b])=>b);
+    const detailedCount = list.filter(s=>s.intent && s.intent.type==='상세').length;
+    const parts = [];
+    if(topBenefits.length) parts.push(`'${topBenefits.join("', '")}' 혜택요소를 공통으로 사용`);
+    if(detailedCount>0 && detailedCount >= Math.ceil(list.length/2)) parts.push(`${detailedCount}/${list.length}개가 데이터 기반 상세 기획의도로 설계됨`);
+    if(!parts.length) parts.push(`${list.length}개 소재가 브랜드 평균 대비 ROAS·CPA 우수`);
+    reasons[brand] = `이 소재들이 잘 되는 이유: ${parts.join(', ')}`;
+  });
+
+  const standoutSet = new Set();
+  Object.entries(standouts).forEach(([brand,list])=>list.forEach(s=>standoutSet.add(s.name+'|'+brand)));
+  return { standoutSet, reasons };
+}
+
 /* ===================== 검색 ===================== */
 function renderSearch(){
   const brands = ['전체', ...BRANDS()];
@@ -361,15 +404,19 @@ function renderSearch(){
     );
     const box = document.getElementById('search-results');
     if(!rows.length){ box.innerHTML = `<div class="callout" style="text-align:center;">검색 결과가 없습니다.</div>`; return; }
+    const { standoutSet, reasons } = computeStandouts();
     box.innerHTML = rows.map(s=>{
       const p = perfFor(s.name, s.brand);
       const ip = REG().introPerf[s.name];
       const ipDays = ip ? daysTrackedFor(currentRegion, s.name, s.brand) : null;
       const ipReady = ip && !(ipDays!=null && ipDays < MIN_TRACKING_DAYS);
+      const isStandout = standoutSet.has(s.name+'|'+s.brand);
+      const reasonText = isStandout ? (reasons[s.brand]||'') : '';
       return `<div class="result-card" data-name="${esc(s.name)}" data-brand="${esc(s.brand)}">
         <div class="rc-head">
           <span class="rc-name">${highlight(s.name)}</span>
           ${matchTag(s.match)} ${verdictTag(s.verdict)} ${s.approval?approvalTag(s.approval):''}
+          ${isStandout?`<span class="tag standout standout-badge" title="${esc(reasonText)}" data-reason="${esc(reasonText)}">🔥 주목해야할 소재</span>`:''}
         </div>
         <div class="rc-meta">${esc(s.brand)} · ${esc(s.product)}${ipReady?` · 승자 인트로${determineWinnerIntro(ip)}`:ip?` · 데이터 축적 중 (${ipDays}/${MIN_TRACKING_DAYS}일)`:''}</div>
         ${p ? `<div class="rc-stats" style="margin-top:8px;">
@@ -385,6 +432,9 @@ function renderSearch(){
     }).join('');
     box.querySelectorAll('.result-card').forEach(el=>{
       el.addEventListener('click', ()=>openScriptModal(el.dataset.name, el.dataset.brand));
+    });
+    box.querySelectorAll('.standout-badge').forEach(el=>{
+      el.addEventListener('click', e=>{ e.stopPropagation(); toast(el.dataset.reason); });
     });
   }
   document.getElementById('search-input').addEventListener('input', e=>{ searchTerm = e.target.value; draw(); });

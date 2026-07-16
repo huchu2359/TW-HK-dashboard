@@ -118,6 +118,7 @@ a{color:var(--primary);text-decoration:none;}
 .tag.sheet{background:var(--primary-dim);color:var(--primary);}
 .tag.inferred{background:var(--surface-alt);color:var(--muted);}
 .tag.stale{background:var(--warning-dim);color:var(--warning);}
+.tag.standout{background:var(--danger-dim);color:var(--danger);cursor:help;}
 
 table{width:100%;border-collapse:collapse;font-size:13px;}
 th,td{padding:11px 12px;text-align:left;border-bottom:1px solid var(--border);}
